@@ -4,7 +4,7 @@ const User = require('../models/User');
 const { signToken } = require('../utils/jwt');
 const { normalizePermissions } = require('../utils/permissions');
 const { logAuditEvent } = require('../utils/auditLog');
-const { getPrimaryClientOrigin } = require('../config/corsConfig');
+const { getPrimaryClientUrl } = require('../config/clientUrl');
 
 function hashToken(rawToken) {
   return crypto.createHash('sha256').update(String(rawToken || '')).digest('hex');
@@ -15,7 +15,7 @@ function issueRawToken() {
 }
 
 function buildDevUrl(pathname, token) {
-  const base = getPrimaryClientOrigin().replace(/\/+$/, '');
+  const base = getPrimaryClientUrl().replace(/\/+$/, '');
   return `${base}${pathname}?token=${encodeURIComponent(token)}`;
 }
 

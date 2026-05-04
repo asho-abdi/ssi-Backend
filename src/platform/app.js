@@ -1,12 +1,16 @@
 const express = require('express');
-const { createCorsMiddleware } = require('../config/corsConfig');
+const cors = require('cors');
 const routes = require('./routes');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 function createApp() {
   const app = express();
 
-  app.use(createCorsMiddleware());
+  app.use(
+    cors({
+      origin: true,
+    })
+  );
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true }));
 
