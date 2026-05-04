@@ -95,10 +95,8 @@ app.use((err, _req, res, _next) => {
 
 connectDB()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log('[api] Server running on port', PORT);
-      console.log('[api] NODE_ENV:', process.env.NODE_ENV || 'development');
-      console.log('[api] CORS: origin reflected from request (origin: true)');
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
     });
   })
   .catch((e) => {
