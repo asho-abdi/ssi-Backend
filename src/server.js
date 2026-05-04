@@ -24,7 +24,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const announcementRoutes = require('./routes/announcementRoutes');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 function ensureProductionEnv() {
   if (process.env.NODE_ENV !== 'production') return;
