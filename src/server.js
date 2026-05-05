@@ -26,7 +26,24 @@ const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
 
-const PORT = Number(process.env.PORT) || 5000;
+/** Never trust `Number('')` → 0 → fallback; Railway must use injected PORT exactly. */
+function resolveListenPort() {
+  const raw = process.env.PORT;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return 5000;
+  }
+  const n = parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n < 1 || n > 65535) {
+    console.error('[server] Invalid PORT env; using 5000. Raw:', JSON.stringify(raw));
+    return 5000;
+  }
+  return n;
+}
+
+const PORT = resolveListenPort();
+/** On Railway, omit host so Node uses the default dual-stack bind (:: + IPv4-mapped). Plain 0.0.0.0 can miss some edge paths → 502. Local dev: force 0.0.0.0 unless LISTEN_HOST is set. */
+const IS_RAILWAY = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+const LISTEN_HOST = process.env.LISTEN_HOST || (IS_RAILWAY ? undefined : '0.0.0.0');
 
 /**
  * Never throw: a thrown error here runs before app.listen() and makes Railway show
@@ -140,8 +157,18 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ message });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[server] Listening on 0.0.0.0:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
-});
+function listenCallback() {
+  console.log(
+    `[server] Listening port=${PORT} host=${LISTEN_HOST ?? '(Node default)'} raw_PORT=${JSON.stringify(
+      process.env.PORT ?? null
+    )} railway=${IS_RAILWAY} NODE_ENV=${process.env.NODE_ENV || 'development'}`
+  );
+}
+
+if (LISTEN_HOST) {
+  app.listen(PORT, LISTEN_HOST, listenCallback);
+} else {
+  app.listen(PORT, listenCallback);
+}
 
 startMongoConnection();
