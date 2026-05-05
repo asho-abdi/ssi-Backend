@@ -25,9 +25,16 @@ const announcementRoutes = require('./routes/announcementRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
-const PORT = Number(process.env.PORT) || 5000;
 
-function ensureProductionEnv() {
+// Railway injects PORT — must not fall back incorrectly when PORT is set.
+const _port = Number(process.env.PORT);
+const PORT = Number.isInteger(_port) && _port > 0 ? _port : 5000;
+
+/**
+ * Never throw: a thrown error here runs before app.listen() and makes Railway show
+ * "Application failed to respond" with a crash loop.
+ */
+function logProductionEnvWarnings() {
   if (process.env.NODE_ENV !== 'production') return;
   const mongoOk = Boolean(process.env.MONGO_URI || process.env.MONGODB_URI);
   const jwtOk = Boolean(process.env.JWT_SECRET);
@@ -37,11 +44,14 @@ function ensureProductionEnv() {
   if (!jwtOk) missing.push('JWT_SECRET');
   if (!clientOk) missing.push('CLIENT_URL');
   if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    console.error(
+      '[config] Missing env vars (server will still boot; API/DB may not work):',
+      missing.join(', ')
+    );
   }
 }
 
-ensureProductionEnv();
+logProductionEnvWarnings();
 
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
