@@ -124,10 +124,14 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ message });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[server] Listening on 0.0.0.0:${PORT} (env=${process.env.NODE_ENV || 'development'})`);
+// Bind: omit host so Node listens on the unspecified address (IPv6 :: when available, else IPv4).
+// Binding only '0.0.0.0' can miss IPv6-only internal routes on some hosts → edge 502.
+app.listen(PORT, () => {
   console.log(
-    '[server] Test this deploy: open your Railway public URL for this service, then GET /health or GET /api/health'
+    `[server] Listening on port ${PORT} (PORT env=${JSON.stringify(process.env.PORT ?? null)}, NODE_ENV=${process.env.NODE_ENV || 'development'})`
+  );
+  console.log(
+    '[server] Open this service’s public URL: GET /health or GET / (Railway → Networking → generate domain if needed)'
   );
 });
 
