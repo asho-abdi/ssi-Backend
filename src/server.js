@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { connectDB } = require('./config/db');
+const { startMongoConnection } = require('./config/db');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -97,13 +97,8 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ message });
 });
 
-// Listen immediately so Railway/edge health checks get a response while Mongo connects.
-// If we only listen after connectDB(), a slow or stuck DB causes "Application failed to respond".
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on 0.0.0.0:${PORT}`);
+  console.log(`[server] Listening on 0.0.0.0:${PORT} (env=${process.env.NODE_ENV || 'development'})`);
 });
 
-connectDB().catch((e) => {
-  console.error('[db] Connection failed:', e.message);
-  process.exit(1);
-});
+startMongoConnection();
