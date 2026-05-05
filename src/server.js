@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const mongoose = require('mongoose');
 const { startMongoConnection } = require('./config/db');
 
 const authRoutes = require('./routes/authRoutes');
@@ -72,8 +73,24 @@ app.get('/', (_req, res) => {
   res.type('html').send('Backend is LIVE 🚀');
 });
 
+function healthPayload() {
+  const dbConnected = mongoose.connection.readyState === 1;
+  return {
+    ok: true,
+    service: 'api',
+    env: process.env.NODE_ENV || 'development',
+    db: dbConnected ? 'connected' : 'disconnected',
+    time: new Date().toISOString(),
+  };
+}
+
+/** Some hosts default health checks to /health — keep in sync with /api/health */
+app.get('/health', (_req, res) => {
+  res.json(healthPayload());
+});
+
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, env: process.env.NODE_ENV || 'development', time: new Date().toISOString() });
+  res.json(healthPayload());
 });
 
 app.use('/api/auth', authRoutes);
@@ -109,6 +126,9 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] Listening on 0.0.0.0:${PORT} (env=${process.env.NODE_ENV || 'development'})`);
+  console.log(
+    '[server] Test this deploy: open your Railway public URL for this service, then GET /health or GET /api/health'
+  );
 });
 
 startMongoConnection();
