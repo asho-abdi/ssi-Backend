@@ -97,13 +97,13 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ message });
 });
 
-connectDB()
-  .then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch((e) => {
-    console.error('[db] Connection failed:', e.message);
-    process.exit(1);
-  });
+// Listen immediately so Railway/edge health checks get a response while Mongo connects.
+// If we only listen after connectDB(), a slow or stuck DB causes "Application failed to respond".
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on 0.0.0.0:${PORT}`);
+});
+
+connectDB().catch((e) => {
+  console.error('[db] Connection failed:', e.message);
+  process.exit(1);
+});

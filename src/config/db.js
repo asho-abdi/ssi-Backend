@@ -14,7 +14,10 @@ async function connectDB() {
   const masked = uri.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:***@');
   console.log('[db] Connecting:', masked.split('?')[0]);
   mongoose.set('strictQuery', true);
-  await mongoose.connect(uri);
+  await mongoose.connect(uri, {
+    serverSelectionTimeoutMS: 15_000,
+    connectTimeoutMS: 15_000,
+  });
   console.log('[db] MongoDB connected successfully');
   console.log('[db] NODE_ENV:', process.env.NODE_ENV || 'development');
 }
