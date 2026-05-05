@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const mongoose = require('mongoose');
 const { startMongoConnection } = require('./config/db');
 
 const authRoutes = require('./routes/authRoutes');
@@ -27,9 +26,7 @@ const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
 
-// Railway injects PORT — must not fall back incorrectly when PORT is set.
-const _port = Number(process.env.PORT);
-const PORT = Number.isInteger(_port) && _port > 0 ? _port : 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 /**
  * Never throw: a thrown error here runs before app.listen() and makes Railway show
@@ -58,6 +55,49 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
+// ---------------------------------------------------------------------------
+// Earliest routes — no CORS/body middleware; always fast for Railway / probes
+// ---------------------------------------------------------------------------
+app.get('/', (_req, res) => {
+  try {
+    console.log('[server] GET /');
+    res.type('text').send('Backend is LIVE 🚀');
+  } catch (err) {
+    console.error('[server] GET / error:', err);
+    res.status(500).type('text').send('Server error');
+  }
+});
+
+app.get('/favicon.ico', (_req, res) => {
+  try {
+    res.status(204).end();
+  } catch (err) {
+    console.error('[server] favicon error:', err);
+    res.status(204).end();
+  }
+});
+
+app.get('/health', (_req, res) => {
+  try {
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[server] GET /health error:', err);
+    res.status(500).json({ ok: false });
+  }
+});
+
+app.get('/api/health', (_req, res) => {
+  try {
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[server] GET /api/health error:', err);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Middleware & API
+// ---------------------------------------------------------------------------
 app.use(
   cors({
     origin: true,
@@ -68,30 +108,6 @@ app.use('/webhook', webhookRoutes);
 
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads/images', express.static(path.join(__dirname, '..', 'uploads', 'images')));
-
-app.get('/', (_req, res) => {
-  res.type('html').send('Backend is LIVE 🚀');
-});
-
-function healthPayload() {
-  const dbConnected = mongoose.connection.readyState === 1;
-  return {
-    ok: true,
-    service: 'api',
-    env: process.env.NODE_ENV || 'development',
-    db: dbConnected ? 'connected' : 'disconnected',
-    time: new Date().toISOString(),
-  };
-}
-
-/** Some hosts default health checks to /health — keep in sync with /api/health */
-app.get('/health', (_req, res) => {
-  res.json(healthPayload());
-});
-
-app.get('/api/health', (_req, res) => {
-  res.json(healthPayload());
-});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -124,12 +140,8 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ message });
 });
 
-// Bind: omit host so Node listens on the unspecified address (IPv6 :: when available, else IPv4).
-// Binding only '0.0.0.0' can miss IPv6-only internal routes on some hosts → edge 502.
-app.listen(PORT, () => {
-  console.log(
-    `[server] Listening on port ${PORT} (PORT env=${JSON.stringify(process.env.PORT ?? null)}, NODE_ENV=${process.env.NODE_ENV || 'development'})`
-  );
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[server] Listening on 0.0.0.0:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
 });
 
 startMongoConnection();
