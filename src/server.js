@@ -130,9 +130,6 @@ app.listen(PORT, () => {
   console.log(
     `[server] Listening on port ${PORT} (PORT env=${JSON.stringify(process.env.PORT ?? null)}, NODE_ENV=${process.env.NODE_ENV || 'development'})`
   );
-  console.log(
-    '[server] Open this service’s public URL: GET /health or GET / (Railway → Networking → generate domain if needed)'
-  );
 });
 
 startMongoConnection();
