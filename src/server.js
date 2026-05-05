@@ -22,6 +22,7 @@ const auditLogRoutes = require('./routes/auditLogRoutes');
 const discussionRoutes = require('./routes/discussionRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const announcementRoutes = require('./routes/announcementRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -51,6 +52,9 @@ app.use(
     origin: true,
   })
 );
+
+app.use('/webhook', webhookRoutes);
+
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads/images', express.static(path.join(__dirname, '..', 'uploads', 'images')));
 
