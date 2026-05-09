@@ -1,46 +1,32 @@
-const path = require('path');
-const { isImageKitConfigured } = require('../config/imagekit');
-const { uploadBuffer } = require('../services/imagekitMedia');
+function publicOrigin() {
+  const fromEnv = (process.env.PUBLIC_MEDIA_ORIGIN || process.env.MEDIA_PUBLIC_ORIGIN || '').trim();
+  return fromEnv.replace(/\/+$/, '');
+}
 
-async function uploadImage(req, res) {
-  if (!isImageKitConfigured()) {
-    return res.status(503).json({ message: 'ImageKit is not configured on server' });
-  }
-  if (!req.file?.buffer) {
+function absoluteFileUrl(relativePath, req) {
+  const origin = publicOrigin();
+  if (origin) return `${origin}${relativePath}`;
+  const host = req.get('host');
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  return host ? `${protocol}://${host}${relativePath}` : relativePath;
+}
+
+function uploadImage(req, res) {
+  if (!req.file) {
     return res.status(400).json({ message: 'Image file is required' });
   }
 
-  const ext =
-    path.extname(req.file.originalname || '').toLowerCase() ||
-    (req.file.mimetype === 'image/png' ? '.png' : req.file.mimetype === 'image/webp' ? '.webp' : '.jpg');
+  const relativePath = `/uploads/images/${req.file.filename}`;
+  const imageUrl = absoluteFileUrl(relativePath, req);
 
-  const safeBase = path
-    .basename(req.file.originalname || 'image', path.extname(req.file.originalname || ''))
-    .replace(/[^a-zA-Z0-9_-]/g, '_')
-    .slice(0, 60);
-
-  const fileName = `${safeBase || 'image'}${ext}`;
-
-  try {
-    const uploaded = await uploadBuffer({
-      buffer: req.file.buffer,
-      fileName,
-      folder: '/lms/images',
-    });
-
-    return res.status(201).json({
-      message: 'Image uploaded',
-      url: uploaded.url,
-      fileId: uploaded.fileId,
-      path: uploaded.filePath,
-      filename: fileName,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-    });
-  } catch (err) {
-    console.error('[upload] image upload failed:', err?.message || err);
-    return res.status(502).json({ message: 'Failed to upload image to ImageKit' });
-  }
+  return res.status(201).json({
+    message: 'Image uploaded',
+    url: imageUrl,
+    path: relativePath,
+    filename: req.file.filename,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+  });
 }
 
 function inferFileType(mimetype = '', originalname = '') {
@@ -53,41 +39,26 @@ function inferFileType(mimetype = '', originalname = '') {
   return 'other';
 }
 
-async function uploadFile(req, res) {
-  if (!isImageKitConfigured()) {
-    return res.status(503).json({ message: 'ImageKit is not configured on server' });
-  }
-  if (!req.file?.buffer) {
+function uploadFile(req, res) {
+  if (!req.file) {
     return res.status(400).json({ message: 'File is required' });
   }
 
-  const original = String(req.file.originalname || 'resource').trim();
-  const safeName = original.replace(/[^a-zA-Z0-9._ -]/g, '_').slice(0, 180) || 'resource';
+  const relativePath = `/uploads/resources/${req.file.filename}`;
+  const fileUrl = absoluteFileUrl(relativePath, req);
 
-  try {
-    const uploaded = await uploadBuffer({
-      buffer: req.file.buffer,
-      fileName: safeName,
-      folder: '/lms/resources',
-    });
-
-    return res.status(201).json({
-      message: 'File uploaded',
-      url: uploaded.url,
-      fileId: uploaded.fileId,
-      path: uploaded.filePath,
-      storage_path: '',
-      filename: safeName,
-      original_name: original,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      size_bytes: req.file.size,
-      file_type: inferFileType(req.file.mimetype, req.file.originalname),
-    });
-  } catch (err) {
-    console.error('[upload] file upload failed:', err?.message || err);
-    return res.status(502).json({ message: 'Failed to upload file to ImageKit' });
-  }
+  return res.status(201).json({
+    message: 'File uploaded',
+    url: fileUrl,
+    path: relativePath,
+    storage_path: relativePath,
+    filename: req.file.filename,
+    original_name: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    size_bytes: req.file.size,
+    file_type: inferFileType(req.file.mimetype, req.file.originalname),
+  });
 }
 
 module.exports = { uploadImage, uploadFile };
