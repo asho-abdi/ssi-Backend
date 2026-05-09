@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { startMongoConnection } = require('./config/db');
 
 const authRoutes = require('./routes/authRoutes');
@@ -53,16 +54,10 @@ function logProductionEnvWarnings() {
   const mongoOk = Boolean(process.env.MONGO_URI || process.env.MONGODB_URI);
   const jwtOk = Boolean(process.env.JWT_SECRET);
   const clientOk = Boolean(process.env.CLIENT_URL);
-  const imageKitOk = Boolean(
-    String(process.env.IMAGEKIT_PUBLIC_KEY || '').trim() &&
-      String(process.env.IMAGEKIT_PRIVATE_KEY || '').trim() &&
-      String(process.env.IMAGEKIT_URL_ENDPOINT || '').trim()
-  );
   const missing = [];
   if (!mongoOk) missing.push('MONGO_URI or MONGODB_URI');
   if (!jwtOk) missing.push('JWT_SECRET');
   if (!clientOk) missing.push('CLIENT_URL');
-  if (!imageKitOk) missing.push('IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY, IMAGEKIT_URL_ENDPOINT');
   if (missing.length > 0) {
     console.error(
       '[config] Missing env vars (server will still boot; API/DB may not work):',
@@ -129,7 +124,7 @@ app.use(
 app.use('/webhook', webhookRoutes);
 
 app.use(express.json({ limit: '10mb' }));
-// Image uploads are served from ImageKit CDN, not local filesystem.
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);

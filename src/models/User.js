@@ -19,7 +19,6 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: '' },
     bio: { type: String, trim: true, default: '' },
     avatar_url: { type: String, trim: true, default: '' },
-    avatar_file_id: { type: String, trim: true, default: '' },
     social: {
       facebook: { type: String, trim: true, default: '' },
       linkedin: { type: String, trim: true, default: '' },

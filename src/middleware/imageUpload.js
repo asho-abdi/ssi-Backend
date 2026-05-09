@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 
@@ -20,12 +21,35 @@ function imageFileFilter(_req, file, cb) {
   cb(err);
 }
 
+const uploadRoot = path.join(__dirname, '..', '..', 'uploads');
+const imageUploadDir = path.join(uploadRoot, 'images');
+
+if (!fs.existsSync(imageUploadDir)) {
+  fs.mkdirSync(imageUploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, imageUploadDir),
+  filename: (_req, file, cb) => {
+    const ext = ALLOWED_MIME_TYPES[file.mimetype] || path.extname(file.originalname).toLowerCase();
+    const safeBaseName = path
+      .basename(file.originalname, path.extname(file.originalname))
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    const finalName = `${safeBaseName || 'image'}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, finalName);
+  },
+});
+
 const imageUpload = multer({
-  storage: multer.memoryStorage(),
+  storage,
   fileFilter: imageFileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024,
   },
 });
 
-module.exports = { imageUpload };
+module.exports = { imageUpload, imageUploadDir };
