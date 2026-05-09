@@ -15,7 +15,9 @@ router.post('/images', protect, requireRoles('student', 'teacher', 'editor', 'ad
     }
     return res.status(err.status || 400).json({ message: err.message || 'Image upload failed' });
   });
-}, uploadImage);
+}, (req, res, next) => {
+  uploadImage(req, res).catch(next);
+});
 
 router.post('/files', protect, requirePermissions('uploadResources'), (req, res, next) => {
   fileUpload.single('file')(req, res, (err) => {
@@ -25,6 +27,8 @@ router.post('/files', protect, requirePermissions('uploadResources'), (req, res,
     }
     return res.status(err.status || 400).json({ message: err.message || 'File upload failed' });
   });
-}, uploadFile);
+}, (req, res, next) => {
+  uploadFile(req, res).catch(next);
+});
 
 module.exports = router;

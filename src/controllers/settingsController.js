@@ -1,5 +1,6 @@
 const PlatformSettings = require('../models/PlatformSettings');
 const { logAuditEvent } = require('../utils/auditLog');
+const { safeDeleteFile } = require('../services/imagekitMedia');
 
 const SECTIONS = [
   'general',
@@ -81,6 +82,18 @@ async function updateSection(req, res) {
   const settings = await getOrCreateSettings();
   const baseline = sectionToPlain(settings, section);
   const merged = mergePlain(baseline, incoming);
+  if (section === 'general') {
+    const oldLogoId = String(baseline.logo_file_id || '').trim();
+    const oldFavId = String(baseline.favicon_file_id || '').trim();
+    if (oldLogoId && merged.logo_url !== baseline.logo_url) {
+      await safeDeleteFile(oldLogoId);
+      if (String(merged.logo_file_id || '').trim() === oldLogoId) merged.logo_file_id = '';
+    }
+    if (oldFavId && merged.favicon_url !== baseline.favicon_url) {
+      await safeDeleteFile(oldFavId);
+      if (String(merged.favicon_file_id || '').trim() === oldFavId) merged.favicon_file_id = '';
+    }
+  }
   settings.set(section, merged);
   settings.markModified(section);
 

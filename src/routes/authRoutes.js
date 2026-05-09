@@ -46,6 +46,7 @@ router.patch(
     body('bio').optional().trim(),
     body('avatar_url').optional().trim(),
     body('avatarUrl').optional().trim(),
+    body('avatar_file_id').optional().trim(),
     body('social.facebook').optional().trim(),
     body('social.linkedin').optional().trim(),
     body('social.website').optional().trim(),

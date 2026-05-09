@@ -37,12 +37,7 @@ async function safeDeleteFile(fileId) {
   if (!id) return;
   try {
     const ik = getImageKit();
-    await new Promise((resolve, reject) => {
-      ik.deleteFile(id, (err, response) => {
-        if (err) reject(err);
-        else resolve(response);
-      });
-    });
+    await ik.deleteFile(id);
   } catch (err) {
     const msg = String(err?.message || err || '');
     if (/not\s*found|404|does\s*not\s*exist/i.test(msg)) {
