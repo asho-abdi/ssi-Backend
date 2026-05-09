@@ -1,6 +1,5 @@
 const PlatformSettings = require('../models/PlatformSettings');
 const { logAuditEvent } = require('../utils/auditLog');
-const { safeDeleteFile } = require('../services/imagekitMedia');
 
 const SECTIONS = [
   'general',
@@ -82,26 +81,6 @@ async function updateSection(req, res) {
   const settings = await getOrCreateSettings();
   const baseline = sectionToPlain(settings, section);
   const merged = mergePlain(baseline, incoming);
-
-  /**
-   * General branding images: when logo/favicon URL changes, delete the previous ImageKit asset
-   * if we stored its fileId (see Admin Settings upload → logo_file_id / favicon_file_id).
-   */
-  if (section === 'general') {
-    if (baseline.logo_file_id && merged.logo_url !== baseline.logo_url) {
-      await safeDeleteFile(baseline.logo_file_id);
-      if (merged.logo_file_id === baseline.logo_file_id) {
-        merged.logo_file_id = '';
-      }
-    }
-    if (baseline.favicon_file_id && merged.favicon_url !== baseline.favicon_url) {
-      await safeDeleteFile(baseline.favicon_file_id);
-      if (merged.favicon_file_id === baseline.favicon_file_id) {
-        merged.favicon_file_id = '';
-      }
-    }
-  }
-
   settings.set(section, merged);
   settings.markModified(section);
 

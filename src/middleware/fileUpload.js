@@ -1,9 +1,11 @@
-/**
- * Multer memory storage for course resources (PDF, Office, ZIP) → ImageKit raw upload.
- * Max 100MB per file.
- */
+const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+
+const uploadDir = path.resolve(process.cwd(), 'uploads', 'resources');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 const allowedMimeTypes = new Set([
   'application/pdf',
@@ -17,6 +19,15 @@ const allowedMimeTypes = new Set([
 
 const allowedExtensions = new Set(['.pdf', '.ppt', '.pptx', '.xls', '.xlsx', '.zip']);
 
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => {
+    const safeBase = path.basename(file.originalname, path.extname(file.originalname)).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${safeBase}${ext}`);
+  },
+});
+
 function fileFilter(_req, file, cb) {
   const ext = path.extname(file.originalname || '').toLowerCase();
   if (allowedMimeTypes.has(file.mimetype) || allowedExtensions.has(ext)) {
@@ -27,7 +38,7 @@ function fileFilter(_req, file, cb) {
 }
 
 const fileUpload = multer({
-  storage: multer.memoryStorage(),
+  storage,
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter,
 });

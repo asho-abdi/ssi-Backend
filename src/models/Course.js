@@ -27,8 +27,6 @@ const resourceSchema = new mongoose.Schema(
     file_type: { type: String, enum: ['pdf', 'ppt', 'excel', 'zip', 'other'], default: 'other' },
     size_bytes: { type: Number, default: 0, min: 0 },
     storage_path: { type: String, default: '', trim: true },
-    /** ImageKit fileId for downloadable course files (ZIP, PDF, etc.) — cleanup on course delete. */
-    imagekit_file_id: { type: String, default: '', trim: true },
   },
   { _id: true }
 );
@@ -101,10 +99,7 @@ const courseSchema = new mongoose.Schema(
     sale_price: { type: Number, default: 0, min: 0 },
     difficulty_level: { type: String, enum: DIFFICULTY_LEVELS, default: 'all' },
     duration: { type: Number, required: true, min: 0 },
-    /** Public delivery URL from ImageKit (or any HTTPS image URL). */
     thumbnail: { type: String, default: '' },
-    /** ImageKit fileId — used to delete/replace the thumbnail without orphans. */
-    thumbnail_file_id: { type: String, default: '', trim: true },
     video_url: { type: String, default: '' },
     category_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null, index: true },
     teacher_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
