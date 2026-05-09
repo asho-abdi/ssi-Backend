@@ -8,10 +8,6 @@ const sampleUsers = [
   { fullName: 'Student One', email: 'student@platform.local', role: 'student', phone: '+252600000004' },
 ];
 
-const sampleCategories = [
-  { name: 'Technology', slug: slugify('Technology'), status: 'active' },
-  { name: 'Business & Management', slug: slugify('Business & Management'), status: 'active' },
-];
 
 function buildSampleCourse(teacherId, categoryId) {
   return {
@@ -45,7 +41,6 @@ function buildSampleCertificate(studentId, courseId, enrollmentId) {
 
 module.exports = {
   sampleUsers,
-  sampleCategories,
   buildSampleCourse,
   buildSampleCertificate,
 };
