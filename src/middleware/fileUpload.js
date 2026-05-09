@@ -1,11 +1,5 @@
-const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-
-const uploadDir = path.resolve(process.cwd(), 'uploads', 'resources');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
 
 const allowedMimeTypes = new Set([
   'application/pdf',
@@ -28,17 +22,8 @@ function fileFilter(_req, file, cb) {
   cb(new Error('Only PPT, PDF, Excel, and ZIP files are allowed'));
 }
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const safeBase = path.basename(file.originalname, path.extname(file.originalname)).replace(/[^a-zA-Z0-9_-]/g, '_');
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${Date.now()}-${safeBase}${ext}`);
-  },
-});
-
 const fileUpload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter,
 });

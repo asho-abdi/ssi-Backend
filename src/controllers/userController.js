@@ -8,6 +8,7 @@ const Review = require('../models/Review');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
 const { normalizePermissions } = require('../utils/permissions');
 const { logAuditEvent } = require('../utils/auditLog');
+const { safeDeleteFile } = require('../services/imagekitMedia');
 
 function normalizeAdminUserRow(row) {
   const avatarUrl =
@@ -341,6 +342,9 @@ async function deleteUser(req, res) {
   }
   const user = await User.findByIdAndDelete(id);
   if (!user) return res.status(404).json({ message: 'User not found' });
+  if (user.avatar_file_id) {
+    await safeDeleteFile(user.avatar_file_id);
+  }
   await logAuditEvent(req, {
     action: 'admin.user_delete',
     target_type: 'user',

@@ -10,7 +10,6 @@
     "start": "node server.js",
     "dev": "node --watch src/server.js",
     "seed": "node src/seed.js",
-    "audit:images": "node src/scripts/auditMissingImages.js",
     "start:platform": "node src/platform/server.js",
     "dev:platform": "node --watch src/platform/server.js"
   },
@@ -20,6 +19,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "express-validator": "^7.2.0",
+    "imagekit": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.7.0",
     "multer": "^2.1.1",

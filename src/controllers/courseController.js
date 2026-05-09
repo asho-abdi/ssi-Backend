@@ -2,9 +2,10 @@ const Course = require('../models/Course');
 const User = require('../models/User');
 const Category = require('../models/Category');
 const mongoose = require('mongoose');
-const fs = require('fs');
-const path = require('path');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const { Enrollment } = require('../models/Enrollment');
+const { safeDeleteFile } = require('../services/imagekitMedia');
 
 function normalizeSalePrice(price, salePriceInput) {
   if (salePriceInput == null || salePriceInput === '') return 0;
@@ -150,6 +151,7 @@ function normalizeResources(rawResources) {
         file_type: normalizeFileType(resource?.file_type),
         size_bytes,
         storage_path: String(resource?.storage_path || '').trim(),
+        imagekit_file_id: String(resource?.imagekit_file_id || '').trim(),
       };
     })
     .filter((resource) => resource.name && resource.url);
@@ -301,6 +303,35 @@ function findResourceInCourse(coursePlain, resourceId) {
   return null;
 }
 
+function collectImageKitFileIdsFromCoursePlain(plain) {
+  const ids = [];
+  const pushId = (value) => {
+    const id = String(value || '').trim();
+    if (id) ids.push(id);
+  };
+  pushId(plain.thumbnail_file_id);
+  const collectFromResources = (items) => {
+    for (const row of items || []) {
+      pushId(row?.imagekit_file_id);
+    }
+  };
+  collectFromResources(plain.all_resources);
+  for (const topic of plain.course_topics || []) collectFromResources(topic?.resources || []);
+  for (const topicResource of plain.topic_resources || []) collectFromResources(topicResource?.resources || []);
+  return ids;
+}
+
+async function streamRemoteFileToClient(fileUrl, res, downloadName) {
+  const upstream = await fetch(fileUrl, { redirect: 'follow' });
+  if (!upstream.ok || !upstream.body) return false;
+  const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+  const safeName = String(downloadName || 'download').replace(/"/g, '');
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+  await pipeline(Readable.fromWeb(upstream.body), res);
+  return true;
+}
+
 function courseIsPaid(course) {
   return String(course.pricing_type || '').toLowerCase() === 'paid' || Number(course.price || 0) > 0;
 }
@@ -335,19 +366,17 @@ async function downloadCourseResource(req, res) {
   const allowed = await assertDownloadAllowed(req.userId, req.userRole, course);
   if (!allowed) return res.status(403).json({ message: 'Enroll in this course to download resources' });
 
-  const candidateStorage = String(resource.storage_path || '').trim();
-  const candidateUrl = String(resource.url || '').trim();
-  const relPath = candidateStorage || (candidateUrl.startsWith('/uploads/') ? candidateUrl : '');
-  if (!relPath.startsWith('/uploads/resources/')) {
-    return res.status(404).json({ message: 'Resource file missing; re-upload this resource' });
+  const fileUrl = String(resource.url || '').trim();
+  if (!fileUrl.startsWith('http://') && !fileUrl.startsWith('https://')) {
+    return res.status(404).json({ message: 'Resource URL missing; re-upload this resource' });
   }
-
-  const absolutePath = path.join(process.cwd(), relPath.replace(/^\/+/, ''));
-  if (!fs.existsSync(absolutePath)) {
-    return res.status(404).json({ message: 'Resource file not found on server; please re-upload it' });
+  try {
+    const ok = await streamRemoteFileToClient(fileUrl, res, resource.name || 'download');
+    if (!ok) return res.status(502).json({ message: 'Could not fetch file from storage' });
+  } catch (err) {
+    console.error('[course] resource download stream failed:', err?.message || err);
+    if (!res.headersSent) return res.status(502).json({ message: 'Download failed' });
   }
-
-  res.download(absolutePath, resource.name || path.basename(absolutePath));
 }
 
 async function listCourses(req, res) {
@@ -409,6 +438,7 @@ async function createCourse(req, res) {
     difficulty_level: normalizeDifficultyLevel(req.body.difficulty_level),
     duration: Number(req.body.duration),
     thumbnail: req.body.thumbnail ?? '',
+    thumbnail_file_id: String(req.body.thumbnail_file_id || '').trim(),
     video_url,
     category_id: categoryId,
     teacher_id: teacherId,
@@ -453,6 +483,7 @@ async function updateCourse(req, res) {
     difficulty_level,
     duration,
     thumbnail,
+    thumbnail_file_id,
     video_url,
     lessons,
     assignments,
@@ -479,7 +510,19 @@ async function updateCourse(req, res) {
   if (difficulty_level != null) course.difficulty_level = normalizeDifficultyLevel(difficulty_level);
   if (duration != null) course.duration = Number(duration);
   if (thumbnail != null) {
-    course.thumbnail = String(thumbnail || '').trim();
+    const prevThumb = String(course.thumbnail || '').trim();
+    const nextThumb = String(thumbnail || '').trim();
+    const prevFileId = String(course.thumbnail_file_id || '').trim();
+    const incomingFileId = thumbnail_file_id !== undefined ? String(thumbnail_file_id || '').trim() : undefined;
+    const thumbChanged = prevThumb !== nextThumb;
+    const fileIdChanged = incomingFileId !== undefined && incomingFileId !== prevFileId;
+    if (prevFileId && (thumbChanged || fileIdChanged)) {
+      await safeDeleteFile(prevFileId);
+    }
+    course.thumbnail = nextThumb;
+  }
+  if (thumbnail_file_id !== undefined) {
+    course.thumbnail_file_id = String(thumbnail_file_id || '').trim();
   }
   if (teacher_id != null && isAdmin) {
     course.teacher_id = teacher_id;
@@ -540,6 +583,11 @@ async function deleteCourse(req, res) {
   const isAdmin = req.userRole === 'admin';
   if (!isAdmin && !isOwner) {
     return res.status(403).json({ message: 'Forbidden' });
+  }
+  const plain = course.toObject({ flattenMaps: true });
+  const imagekitIds = collectImageKitFileIdsFromCoursePlain(plain);
+  for (const fileId of imagekitIds) {
+    await safeDeleteFile(fileId);
   }
   await course.deleteOne();
   res.json({ message: 'Course deleted' });
