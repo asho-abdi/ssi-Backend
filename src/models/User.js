@@ -19,6 +19,8 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: '' },
     bio: { type: String, trim: true, default: '' },
     avatar_url: { type: String, trim: true, default: '' },
+    /** ImageKit fileId for avatar — removed when user replaces or clears avatar. */
+    avatar_file_id: { type: String, trim: true, default: '' },
     social: {
       facebook: { type: String, trim: true, default: '' },
       linkedin: { type: String, trim: true, default: '' },

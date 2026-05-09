@@ -7,6 +7,8 @@ const platformSettingsSchema = new mongoose.Schema(
       platform_name: { type: String, default: 'Success Skills Institute' },
       logo_url: { type: String, default: '' },
       favicon_url: { type: String, default: '' },
+      logo_file_id: { type: String, default: '' },
+      favicon_file_id: { type: String, default: '' },
       language: { type: String, default: 'en' },
       timezone: { type: String, default: 'UTC' },
       currency: { type: String, default: 'USD' },

@@ -5,6 +5,7 @@ const { signToken } = require('../utils/jwt');
 const { normalizePermissions } = require('../utils/permissions');
 const { logAuditEvent } = require('../utils/auditLog');
 const { getPrimaryClientUrl } = require('../config/clientUrl');
+const { safeDeleteFile } = require('../services/imagekitMedia');
 
 function hashToken(rawToken) {
   return crypto.createHash('sha256').update(String(rawToken || '')).digest('hex');
@@ -228,7 +229,7 @@ async function updateProfile(req, res) {
   if (!errors.isEmpty()) {
     return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
   }
-  const { name, email, phone, bio, avatar_url, avatarUrl, social, instructor_settings } = req.body;
+  const { name, email, phone, bio, avatar_url, avatarUrl, avatar_file_id, social, instructor_settings } = req.body;
   const user = await User.findById(req.userId);
   if (!user) return res.status(404).json({ message: 'User not found' });
   if (email && email !== user.email) {
@@ -242,7 +243,30 @@ async function updateProfile(req, res) {
   if (phone != null) user.phone = String(phone || '').trim();
   if (bio != null) user.bio = String(bio || '').trim();
   const nextAvatar = avatar_url != null ? avatar_url : avatarUrl;
-  if (nextAvatar != null) user.avatar_url = String(nextAvatar || '').trim();
+  const prevAvatarFileId = String(user.avatar_file_id || '').trim();
+
+  /**
+   * Avatar storage: ImageKit url on `avatar_url`, fileId on `avatar_file_id`.
+   * When the image changes, remove the previous ImageKit file to avoid orphans.
+   */
+  if (avatar_file_id !== undefined) {
+    const nextId = String(avatar_file_id || '').trim();
+    if (prevAvatarFileId && nextId !== prevAvatarFileId) {
+      await safeDeleteFile(prevAvatarFileId);
+    }
+    if (!nextId && prevAvatarFileId) {
+      await safeDeleteFile(prevAvatarFileId);
+    }
+    user.avatar_file_id = nextId;
+  }
+  if (nextAvatar != null) {
+    const urlStr = String(nextAvatar || '').trim();
+    user.avatar_url = urlStr;
+    if (!urlStr && prevAvatarFileId && avatar_file_id === undefined) {
+      await safeDeleteFile(prevAvatarFileId);
+      user.avatar_file_id = '';
+    }
+  }
   if (social && typeof social === 'object') {
     user.social = {
       facebook: String(social.facebook || user.social?.facebook || '').trim(),

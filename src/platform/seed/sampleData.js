@@ -21,7 +21,7 @@ function buildSampleCourse(teacherId, categoryId) {
     price: 49.99,
     discountPrice: 39.99,
     durationHours: 12,
-    thumbnail: 'https://images.unsplash.com/photo-1516116216624-53e697fedbea?w=1200',
+    thumbnail: '',
     teacherId,
     categoryId,
     status: 'published',
