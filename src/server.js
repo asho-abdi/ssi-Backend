@@ -24,6 +24,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const announcementRoutes = require('./routes/announcementRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const offlineEnrollmentRoutes = require('./routes/offlineEnrollmentRoutes');
+const contactRoutes = require('./routes/contactRoutes');
 
 const app = express();
 
@@ -146,6 +147,7 @@ app.use('/api/discussions', discussionRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/offline-enrollments', offlineEnrollmentRoutes);
+app.use('/api/contact', contactRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ message: 'Not found' });
