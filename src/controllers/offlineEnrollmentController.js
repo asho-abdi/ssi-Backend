@@ -2,7 +2,7 @@ const OfflineEnrollment = require('../models/OfflineEnrollment');
 const Course = require('../models/Course');
 
 async function createOfflineEnrollment(req, res) {
-  const { fullName, email, phone, courseId } = req.body;
+  const { fullName, email, phone, courseId, schedule, paymentMethod, notes } = req.body;
   if (!fullName || !email || !phone || !courseId) {
     return res.status(400).json({ message: 'fullName, email, phone, and courseId are required' });
   }
@@ -18,6 +18,9 @@ async function createOfflineEnrollment(req, res) {
   const enrollment = await OfflineEnrollment.create({
     fullName: String(fullName).trim(),
     email: String(email).trim().toLowerCase(),
+    schedule: schedule ? String(schedule).trim() : '',
+    paymentMethod: paymentMethod || 'cash',
+    notes: notes ? String(notes).trim() : '',
     phone: String(phone).trim(),
     courseId: course._id,
     courseTitle: course.title,

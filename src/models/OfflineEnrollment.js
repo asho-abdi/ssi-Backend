@@ -8,8 +8,15 @@ const offlineEnrollmentSchema = new mongoose.Schema(
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },
     courseTitle: { type: String, default: '', trim: true },
     price: { type: Number, default: 0, min: 0 },
+    schedule: { type: String, default: '', trim: true },
+    paymentMethod: {
+      type: String,
+      enum: ['evc_plus', 'sahal', 'zaad', 'cash', 'bank_transfer'],
+      default: 'cash',
+    },
+    notes: { type: String, default: '', trim: true },
     paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
-    status: { type: String, enum: ['registered', 'attended'], default: 'registered' },
+    status: { type: String, enum: ['registered', 'attended', 'cancelled'], default: 'registered' },
   },
   { timestamps: true }
 );
