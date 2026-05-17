@@ -26,6 +26,7 @@ const webhookRoutes = require('./routes/webhookRoutes');
 const offlineEnrollmentRoutes = require('./routes/offlineEnrollmentRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const refundRoutes = require('./routes/refundRoutes');
+const mediaMetaRoutes = require('./routes/mediaMetaRoutes');
 
 const app = express();
 
@@ -140,6 +141,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/media', mediaMetaRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/monetization', monetizationRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
