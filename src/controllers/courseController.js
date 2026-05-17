@@ -27,11 +27,19 @@ function normalizePricingType(pricingTypeInput, priceInput) {
 function normalizeLessons(body) {
   const { lessons, video_url } = body;
   if (Array.isArray(lessons) && lessons.length > 0) {
-    return lessons.map((l, i) => ({
-      title: l.title,
-      video_url: l.video_url,
-      order: typeof l.order === 'number' ? l.order : i,
-    }));
+    return lessons.map((l, i) => {
+      const row = {
+        title: l.title,
+        video_url: l.video_url,
+        order: typeof l.order === 'number' ? l.order : i,
+        duration: String(l?.duration ?? '').trim(),
+      };
+      const lid = l?._id;
+      if (lid && mongoose.Types.ObjectId.isValid(String(lid))) {
+        row._id = lid;
+      }
+      return row;
+    });
   }
   if (video_url) {
     return [{ title: 'Introduction', video_url, order: 0 }];
@@ -169,12 +177,20 @@ function normalizeTopicResources(rawTopicResources) {
 function normalizeTopicLessons(rawLessons) {
   if (!Array.isArray(rawLessons)) return [];
   return rawLessons
-    .map((lesson, idx) => ({
-      title: String(lesson?.title || '').trim(),
-      video_url: String(lesson?.video_url || '').trim(),
-      order: Number.isFinite(Number(lesson?.order)) ? Number(lesson.order) : idx,
-    }))
-    .filter((lesson) => lesson.title && lesson.video_url);
+    .map((lesson, idx) => {
+      const title = String(lesson?.title || '').trim();
+      const video_url = String(lesson?.video_url || '').trim();
+      if (!title || !video_url) return null;
+      const order = Number.isFinite(Number(lesson?.order)) ? Number(lesson.order) : idx;
+      const duration = String(lesson?.duration ?? '').trim();
+      const row = { title, video_url, order, duration };
+      const lid = lesson?._id;
+      if (lid && mongoose.Types.ObjectId.isValid(String(lid))) {
+        row._id = lid;
+      }
+      return row;
+    })
+    .filter(Boolean);
 }
 
 function parseTimestampSeconds(value) {
