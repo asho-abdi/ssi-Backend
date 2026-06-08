@@ -44,6 +44,9 @@ const platformSettingsSchema = new mongoose.Schema(
       },
       revenue_sharing_enabled: { type: Boolean, default: true },
       instructor_commission_percent: { type: Number, min: 0, max: 100, default: 70 },
+      affiliate_program_enabled: { type: Boolean, default: true },
+      affiliate_commission_percent: { type: Number, min: 0, max: 100, default: 10 },
+      affiliate_hold_days: { type: Number, min: 0, default: 7 },
       withdrawal: {
         min_amount: { type: Number, min: 0, default: 50 },
         hold_days: { type: Number, min: 0, default: 7 },

@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const Course = require('../models/Course');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
+const { earningsEligiblePaidOrderQuery } = require('../utils/earningsEligibility');
 
 async function myCourses(req, res) {
   const courses = await Course.find({ teacher_id: req.userId })
@@ -14,7 +15,7 @@ async function earnings(req, res) {
   const courses = await Course.find({ teacher_id: req.userId }).select('_id title price').lean();
   const ids = courses.map((c) => c._id);
   const instructorPercentage = await getInstructorPercentage();
-  const orders = await Order.find({ course_id: { $in: ids }, status: 'paid' })
+  const orders = await Order.find(earningsEligiblePaidOrderQuery({ course_id: { $in: ids } }))
     .populate('course_id', 'title price')
     .populate('user_id', 'name email')
     .lean();

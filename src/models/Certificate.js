@@ -4,6 +4,8 @@ const certificateSchema = new mongoose.Schema(
   {
     user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     course_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },
+    template_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CertificateTemplate', default: null },
+    certificate_type: { type: String, enum: ['completion', 'diploma'], default: 'completion' },
     /** Snapshot at issue time so PDFs stay correct if the Course is renamed or removed */
     course_title: { type: String, default: '', trim: true },
     serial_number: { type: Number, min: 1, default: null },

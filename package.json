@@ -11,9 +11,14 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/seed.js",
     "start:platform": "node src/platform/server.js",
-    "dev:platform": "node --watch src/platform/server.js"
+    "dev:platform": "node --watch src/platform/server.js",
+    "migrate:analyze": "node migration/src/analyze.js",
+    "migrate:run": "node migration/src/run.js",
+    "migrate:rollback": "node migration/src/rollback.js",
+    "migrate:rollback:list": "node migration/src/rollback.js --list"
   },
   "dependencies": {
+    "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -22,6 +27,9 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.7.0",
     "multer": "^2.1.1",
-    "pdfkit": "^0.15.0"
+    "mysql2": "^3.11.0",
+    "nodemailer": "^6.9.16",
+    "pdfkit": "^0.15.0",
+    "qrcode": "^1.5.4"
   }
 }

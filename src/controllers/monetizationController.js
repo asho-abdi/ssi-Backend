@@ -6,6 +6,7 @@ const SubscriptionPlan = require('../models/SubscriptionPlan');
 const WithdrawalRequest = require('../models/WithdrawalRequest');
 const PlatformSettings = require('../models/PlatformSettings');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
+const { earningsEligiblePaidOrderQuery } = require('../utils/earningsEligibility');
 
 async function getSettingsDoc() {
   let settings = await PlatformSettings.findOne({ key: 'default' });
@@ -51,7 +52,7 @@ async function computeInstructorWallet(instructorId, settings) {
     };
   }
 
-  const paidOrders = await Order.find({ course_id: { $in: ids }, status: 'paid' })
+  const paidOrders = await Order.find(earningsEligiblePaidOrderQuery({ course_id: { $in: ids } }))
     .select('amount instructor_earning instructor_percentage paid_at createdAt')
     .lean();
   const now = Date.now();
@@ -81,7 +82,7 @@ async function computeInstructorWallet(instructorId, settings) {
     .filter((row) => row.status === 'pending')
     .reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const approvedRequests = requests
-    .filter((row) => row.status === 'approved')
+    .filter((row) => row.status === 'approved' || row.status === 'paid')
     .reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const available = Math.max(0, Number((availableRaw - pendingRequests - approvedRequests).toFixed(2)));
 
@@ -100,7 +101,7 @@ async function computeInstructorWallet(instructorId, settings) {
 async function overview(_req, res) {
   const settings = await getSettingsDoc();
   const { commission, currency } = getCommissionAndCurrency(settings);
-  const paidOrders = await Order.find({ status: 'paid' })
+  const paidOrders = await Order.find(earningsEligiblePaidOrderQuery())
     .populate('course_id', 'title teacher_id')
     .lean();
 
@@ -285,7 +286,9 @@ async function createPlan(req, res) {
   const body = req.body || {};
   const billing_cycle = String(body.billing_cycle || '').toLowerCase();
   const access_scope = String(body.access_scope || 'all_courses').toLowerCase();
-  if (!['monthly', 'yearly'].includes(billing_cycle)) return res.status(400).json({ message: 'Invalid billing_cycle' });
+  if (!['monthly', 'yearly', 'lifetime', 'corporate'].includes(billing_cycle)) {
+    return res.status(400).json({ message: 'Invalid billing_cycle' });
+  }
   if (!['all_courses', 'selected_courses'].includes(access_scope)) return res.status(400).json({ message: 'Invalid access_scope' });
   const plan = await SubscriptionPlan.create({
     name: String(body.name || '').trim(),
@@ -293,6 +296,7 @@ async function createPlan(req, res) {
     price: Number(body.price || 0),
     access_scope,
     course_ids: access_scope === 'selected_courses' ? body.course_ids || [] : [],
+    max_seats: body.max_seats != null ? Number(body.max_seats) : null,
     active: body.active !== false,
   });
   const populated = await SubscriptionPlan.findById(plan._id).populate('course_ids', 'title');
@@ -306,8 +310,13 @@ async function updatePlan(req, res) {
   if (body.name != null) plan.name = String(body.name).trim();
   if (body.billing_cycle != null) {
     const cycle = String(body.billing_cycle).toLowerCase();
-    if (!['monthly', 'yearly'].includes(cycle)) return res.status(400).json({ message: 'Invalid billing_cycle' });
+    if (!['monthly', 'yearly', 'lifetime', 'corporate'].includes(cycle)) {
+      return res.status(400).json({ message: 'Invalid billing_cycle' });
+    }
     plan.billing_cycle = cycle;
+  }
+  if (body.max_seats !== undefined) {
+    plan.max_seats = body.max_seats != null ? Number(body.max_seats) : null;
   }
   if (body.price != null) {
     const price = Number(body.price);
@@ -393,13 +402,15 @@ async function reviewWithdrawal(req, res) {
   const row = await WithdrawalRequest.findById(req.params.id);
   if (!row) return res.status(404).json({ message: 'Withdrawal request not found' });
   const nextStatus = String(req.body.status || '').toLowerCase();
-  if (!['approved', 'rejected'].includes(nextStatus)) {
-    return res.status(400).json({ message: 'status must be approved or rejected' });
+  if (!['approved', 'rejected', 'paid'].includes(nextStatus)) {
+    return res.status(400).json({ message: 'status must be approved, rejected, or paid' });
   }
   row.status = nextStatus;
   row.reviewed_by = req.userId;
   row.reviewed_at = new Date();
   if (req.body.note != null) row.note = String(req.body.note);
+  if (req.body.admin_note != null) row.admin_note = String(req.body.admin_note);
+  if (nextStatus === 'paid') row.paid_at = new Date();
   await row.save();
   const populated = await WithdrawalRequest.findById(row._id)
     .populate('instructor_id', 'name email')
@@ -432,11 +443,23 @@ async function markOrderPaid(req, res) {
   order.paid_at = new Date();
   await order.save();
 
+  try {
+    const { processAffiliateCommissionForOrder } = require('../utils/affiliateCommission');
+    await processAffiliateCommissionForOrder(order);
+  } catch (err) {
+    console.error('[affiliate] markOrderPaid commission failed:', err?.message || err);
+  }
+
   if (order.coupon_code) {
     await Coupon.findOneAndUpdate(
       { code: order.coupon_code, used_count: { $lt: 9999999 } },
       { $inc: { used_count: 1 } }
     );
+  }
+
+  if (order.pricing_link_id) {
+    const { incrementUsage } = require('./pricingLinkController');
+    await incrementUsage(order.pricing_link_id);
   }
 
   res.json({ message: 'Order marked as paid', order });

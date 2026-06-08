@@ -47,7 +47,7 @@ async function seed() {
       'Learn MongoDB, Express, React, and Node.js by building real projects. Includes authentication, REST APIs, and deployment.',
     price: 49.99,
     duration: 12,
-    thumbnail: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=800',
+    thumbnail: '',
     video_url: sampleUrl,
     teacher_id: teacher._id,
     lessons: [
@@ -62,7 +62,7 @@ async function seed() {
     description: 'Practical interface design, accessibility, and modern CSS for developers.',
     price: 29,
     duration: 6,
-    thumbnail: 'https://images.unsplash.com/photo-1561070791-2526d30994b5?w=800',
+    thumbnail: '',
     video_url: 'https://player.vimeo.com/video/76979871',
     teacher_id: teacher._id,
     lessons: [{ title: 'Intro', video_url: 'https://player.vimeo.com/video/76979871', order: 0 }],

@@ -3,6 +3,7 @@ const Course = require('../models/Course');
 const Order = require('../models/Order');
 const Progress = require('../models/Progress');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
+const { earningsEligiblePaidOrderQuery } = require('../utils/earningsEligibility');
 
 async function adminOverview(req, res) {
   const instructorPercentage = await getInstructorPercentage();
@@ -10,9 +11,9 @@ async function adminOverview(req, res) {
     User.countDocuments(),
     Course.countDocuments(),
     Order.countDocuments(),
-    Order.countDocuments({ status: 'paid' }),
+    Order.countDocuments(earningsEligiblePaidOrderQuery()),
   ]);
-  const paidRows = await Order.find({ status: 'paid' })
+  const paidRows = await Order.find(earningsEligiblePaidOrderQuery())
     .select('amount instructor_earning admin_earning')
     .lean();
   let revenue = 0;
@@ -213,7 +214,7 @@ async function adminReport(req, res) {
   const toDate = rangePoints[rangePoints.length - 1].to;
 
   const paidOrders = await Order.find({
-    status: 'paid',
+    ...earningsEligiblePaidOrderQuery(),
     $or: [
       { paid_at: { $gte: fromDate, $lt: toDate } },
       { paid_at: null, createdAt: { $gte: fromDate, $lt: toDate } },

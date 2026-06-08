@@ -39,7 +39,7 @@ function computePercentage(course, completedIds) {
   if (total === 0) return 0;
   const set = new Set((completedIds || []).map((id) => id.toString()));
   if (flat.length > 0) {
-    let done = 0;
+  let done = 0;
     flat.forEach((l) => {
       if (set.has(l._id.toString())) done += 1;
     });
@@ -73,9 +73,15 @@ function snapshotCourseTitle(course) {
 }
 
 /** `course` optional — when present, avoids an extra DB read for the title */
+function formatCertSerial(serialValue) {
+  const serial = Number(serialValue);
+  if (!Number.isFinite(serial) || serial <= 0) return '';
+  return `CNO.SSI${String(Math.trunc(serial)).padStart(6, '0')}`;
+}
+
 async function maybeIssueCertificate(userId, courseId, course) {
   const p = await Progress.findOne({ user_id: userId, course_id: courseId });
-  if (!p || p.progress_percentage < 100) return;
+  if (!p || p.progress_percentage < 100) return null;
   const snap = snapshotCourseTitle(course);
   let fromDb = '';
   if (!snap) {
@@ -84,20 +90,31 @@ async function maybeIssueCertificate(userId, courseId, course) {
   }
   const courseTitle = snap || fromDb || '';
 
-  const exists = await Certificate.findOne({ user_id: userId, course_id: courseId });
-  if (!exists) {
-    await Certificate.create({
+  let cert = await Certificate.findOne({ user_id: userId, course_id: courseId });
+  if (!cert) {
+    cert = await Certificate.create({
       user_id: userId,
       course_id: courseId,
       issue_date: new Date(),
       course_title: courseTitle,
     });
-    return;
+  } else if (courseTitle && !(cert.course_title && String(cert.course_title).trim())) {
+    cert.course_title = courseTitle;
+    await cert.save();
   }
-  if (courseTitle && !(exists.course_title && String(exists.course_title).trim())) {
-    exists.course_title = courseTitle;
-    await exists.save();
-  }
+  return { cert, courseTitle };
+}
+
+/** Issue certificate and mark enrollment completed when progress first reaches 100%. */
+async function issueCertificateIfNeeded(userId, courseId, course, previousPercentage) {
+  if (previousPercentage >= 100) return;
+  const progress = await Progress.findOne({ user_id: userId, course_id: courseId }).lean();
+  if (!progress || Number(progress.progress_percentage || 0) < 100) return;
+  await maybeIssueCertificate(userId, courseId, course);
+  await Enrollment.updateOne(
+    { student_id: userId, course_id: courseId, status: 'approved' },
+    { $set: { status: 'completed' } }
+  );
 }
 
 async function getProgress(req, res) {
@@ -144,6 +161,7 @@ async function updateProgress(req, res) {
       in_video_quiz_attempts: [],
     });
   }
+  const previousPercentage = Number(progress.progress_percentage || 0);
 
   const allLessons = flattenCourseLessons(course);
   const idSet = new Set((progress.completed_lesson_ids || []).map((id) => id.toString()));
@@ -165,13 +183,13 @@ async function updateProgress(req, res) {
     progress.completed_lesson_ids = [];
     progress.progress_percentage = complete === false ? 0 : 100;
     await progress.save();
-    await maybeIssueCertificate(req.userId, courseId, course);
+    await issueCertificateIfNeeded(req.userId, courseId, course, previousPercentage);
     return res.json(progress);
   }
 
   progress.progress_percentage = computePercentage(course, progress.completed_lesson_ids);
   await progress.save();
-  await maybeIssueCertificate(req.userId, courseId, course);
+  await issueCertificateIfNeeded(req.userId, courseId, course, previousPercentage);
   res.json(progress);
 }
 

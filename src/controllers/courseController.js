@@ -27,11 +27,19 @@ function normalizePricingType(pricingTypeInput, priceInput) {
 function normalizeLessons(body) {
   const { lessons, video_url } = body;
   if (Array.isArray(lessons) && lessons.length > 0) {
-    return lessons.map((l, i) => ({
-      title: l.title,
-      video_url: l.video_url,
-      order: typeof l.order === 'number' ? l.order : i,
-    }));
+    return lessons.map((l, i) => {
+      const row = {
+        title: l.title,
+        video_url: l.video_url,
+        order: typeof l.order === 'number' ? l.order : i,
+        duration: String(l?.duration ?? '').trim(),
+      };
+      const lid = l?._id;
+      if (lid && mongoose.Types.ObjectId.isValid(String(lid))) {
+        row._id = lid;
+      }
+      return row;
+    });
   }
   if (video_url) {
     return [{ title: 'Introduction', video_url, order: 0 }];
@@ -155,6 +163,16 @@ function normalizeResources(rawResources) {
     .filter((resource) => resource.name && resource.url);
 }
 
+const MAX_MATERIAL_INCLUDES = 24;
+
+function normalizeMaterialIncludes(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((line) => String(line ?? '').trim())
+    .filter(Boolean)
+    .slice(0, MAX_MATERIAL_INCLUDES);
+}
+
 function normalizeTopicResources(rawTopicResources) {
   if (!Array.isArray(rawTopicResources)) return [];
   return rawTopicResources
@@ -169,12 +187,20 @@ function normalizeTopicResources(rawTopicResources) {
 function normalizeTopicLessons(rawLessons) {
   if (!Array.isArray(rawLessons)) return [];
   return rawLessons
-    .map((lesson, idx) => ({
-      title: String(lesson?.title || '').trim(),
-      video_url: String(lesson?.video_url || '').trim(),
-      order: Number.isFinite(Number(lesson?.order)) ? Number(lesson.order) : idx,
-    }))
-    .filter((lesson) => lesson.title && lesson.video_url);
+    .map((lesson, idx) => {
+      const title = String(lesson?.title || '').trim();
+      const video_url = String(lesson?.video_url || '').trim();
+      if (!title || !video_url) return null;
+      const order = Number.isFinite(Number(lesson?.order)) ? Number(lesson.order) : idx;
+      const duration = String(lesson?.duration ?? '').trim();
+      const row = { title, video_url, order, duration };
+      const lid = lesson?._id;
+      if (lid && mongoose.Types.ObjectId.isValid(String(lid))) {
+        row._id = lid;
+      }
+      return row;
+    })
+    .filter(Boolean);
 }
 
 function parseTimestampSeconds(value) {
@@ -421,6 +447,7 @@ async function createCourse(req, res) {
   const all_resources = normalizeResources(req.body.all_resources);
   const topic_resources = normalizeTopicResources(req.body.topic_resources);
   const course_topics = normalizeCourseTopics(req.body.course_topics);
+  const material_includes = normalizeMaterialIncludes(req.body.material_includes);
   let categoryId = null;
   if (req.body.category_id) {
     const category = await Category.findById(req.body.category_id);
@@ -436,7 +463,9 @@ async function createCourse(req, res) {
     price: Number(req.body.price),
     sale_price: normalizeSalePrice(req.body.price, req.body.sale_price),
     difficulty_level: normalizeDifficultyLevel(req.body.difficulty_level),
-    duration: Number(req.body.duration),
+    // duration and total_minutes are auto-calculated by the pre-save hook from lesson content.
+    // A manual value from the form is accepted as a fallback only when no lessons carry duration.
+    duration: req.body.duration != null ? Number(req.body.duration) : 0,
     thumbnail: req.body.thumbnail ?? '',
     video_url,
     category_id: categoryId,
@@ -447,6 +476,7 @@ async function createCourse(req, res) {
     course_topics,
     all_resources,
     topic_resources,
+    material_includes,
   });
   course.course_topics = (course.course_topics || []).map((topic) => ({
     ...topic.toObject(),
@@ -489,6 +519,7 @@ async function updateCourse(req, res) {
     course_topics,
     all_resources,
     topic_resources,
+    material_includes,
     category_id,
     teacher_id,
   } = req.body;
@@ -506,7 +537,7 @@ async function updateCourse(req, res) {
     course.sale_price = normalizeSalePrice(nextPrice, nextSaleInput);
   }
   if (difficulty_level != null) course.difficulty_level = normalizeDifficultyLevel(difficulty_level);
-  if (duration != null) course.duration = Number(duration);
+  // duration is auto-calculated by the pre-save hook; accept manual value only as initial fallback
   if (thumbnail != null) course.thumbnail = thumbnail;
   if (teacher_id != null && isAdmin) {
     course.teacher_id = teacher_id;
@@ -543,6 +574,9 @@ async function updateCourse(req, res) {
   }
   if (topic_resources != null) {
     course.topic_resources = normalizeTopicResources(topic_resources);
+  }
+  if (material_includes != null) {
+    course.material_includes = normalizeMaterialIncludes(material_includes);
   }
   await course.save();
   course.course_topics = (course.course_topics || []).map((topic) => ({

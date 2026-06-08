@@ -5,6 +5,29 @@ const { signToken } = require('../utils/jwt');
 const { normalizePermissions } = require('../utils/permissions');
 const { logAuditEvent } = require('../utils/auditLog');
 const { getPrimaryClientUrl } = require('../config/clientUrl');
+const PasswordResetOtp = require('../models/PasswordResetOtp');
+const { normalizeWhatsAppRecipient } = require('../utils/phoneE164');
+const {
+  generateNumericOtp,
+  hashOtpCode,
+  hashResetSession,
+  issueResetSessionToken,
+} = require('../utils/otpCrypto');
+const { sendPasswordResetOtp: sendEmailOtp } = require('../services/emailService');
+const { sendPasswordResetOtp: sendWhatsAppOtp, isConfigured: whatsappConfigured } = require('../services/whatsappOtpService');
+
+const OTP_TTL_MS = Number(process.env.OTP_TTL_MS || 10 * 60 * 1000);
+const RESET_SESSION_TTL_MS = Number(process.env.RESET_SESSION_TTL_MS || 15 * 60 * 1000);
+
+function normalizePhone(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return { ok: false, error: 'Phone number is required' };
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) {
+    return { ok: false, error: 'Invalid phone number' };
+  }
+  return { ok: true, value: digits };
+}
 
 function hashToken(rawToken) {
   return crypto.createHash('sha256').update(String(rawToken || '')).digest('hex');
@@ -33,6 +56,23 @@ function attachResetToken(user) {
   return rawToken;
 }
 
+const SSI_USERNAME_DOMAIN = '@ssi.so';
+
+function parseLoginIdentifier(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return { kind: 'empty', value: '' };
+
+  if (value.includes('@')) {
+    if (value.endsWith(SSI_USERNAME_DOMAIN)) {
+      const local = value.slice(0, -SSI_USERNAME_DOMAIN.length).replace(/[^a-z0-9._]/g, '');
+      return { kind: 'username', value: local };
+    }
+    return { kind: 'email', value };
+  }
+
+  return { kind: 'username', value: value.replace(/[^a-z0-9._]/g, '') };
+}
+
 function toAuthUserPayload(user) {
   const effectivePermissions = normalizePermissions(user.permissions, user.role);
   return {
@@ -51,14 +91,14 @@ async function register(req, res) {
   if (!errors.isEmpty()) {
     return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
   }
-  const { name, username, email, password, role } = req.body;
+  const { name, username, email, password, role, phone, referral_code: referralCodeInput } = req.body;
   const allowedRegisterRoles = ['student'];
   const finalRole = allowedRegisterRoles.includes(role) ? role : 'student';
   const exists = await User.findOne({ email });
   if (exists) {
     return res.status(400).json({ message: 'Email already registered' });
   }
-  const usernameValue = String(username || '')
+  const usernameValue = String(username || email || '')
     .trim()
     .toLowerCase();
   const usernameExists = await User.findOne({ username: usernameValue });
@@ -66,8 +106,25 @@ async function register(req, res) {
     return res.status(400).json({ message: 'Username already taken' });
   }
   const user = new User({ name, username: usernameValue, email, password, role: finalRole, email_verified: false });
+
+  const phoneTrim = String(phone || '').trim();
+  const phoneNorm = normalizePhone(phoneTrim);
+  if (!phoneNorm.ok) {
+    return res.status(400).json({ message: phoneNorm.error || 'Invalid phone number' });
+  }
+  user.phone = phoneNorm.value;
+
   const rawVerificationToken = attachVerificationToken(user);
   await user.save();
+
+  const { ensureUserReferralCode, attachReferralToNewUser } = require('../utils/referral');
+  await ensureUserReferralCode(user);
+  if (referralCodeInput) {
+    const referralResult = await attachReferralToNewUser(user, referralCodeInput);
+    if (referralResult.ok && referralResult.referrer) {
+      await user.save();
+    }
+  }
   const token = signToken(user);
   await logAuditEvent(req, {
     actor_id: user._id,
@@ -95,17 +152,24 @@ async function login(req, res) {
   if (!errors.isEmpty()) {
     return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
   }
-  const { email, password } = req.body;
-  const user = await User.findOne({ email }).select('+password');
+  const { password } = req.body;
+  const parsed = parseLoginIdentifier(req.body.login);
+  if (!parsed.value) {
+    return res.status(400).json({ message: 'Email or username is required' });
+  }
+
+  const query =
+    parsed.kind === 'email' ? { email: parsed.value } : { username: parsed.value };
+  const user = await User.findOne(query).select('+password');
   if (!user || !(await user.comparePassword(password))) {
     await logAuditEvent(req, {
       actor_role: 'anonymous',
       action: 'auth.login',
       status: 'failed',
       target_type: 'user',
-      details: { email },
+      details: { login: parsed.value, kind: parsed.kind },
     });
-    return res.status(401).json({ message: 'Invalid email or password' });
+    return res.status(401).json({ message: 'Invalid email, username, or password' });
   }
   const token = signToken(user);
   await logAuditEvent(req, {
@@ -176,6 +240,187 @@ async function verifyEmail(req, res) {
 }
 
 async function forgotPassword(req, res) {
+  const channel = String(req.body?.channel || 'email').toLowerCase();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const phoneRaw = String(req.body?.phone || '').trim();
+
+  if (!['email', 'whatsapp'].includes(channel)) {
+    return res.status(400).json({ message: 'Invalid channel. Use email or whatsapp.' });
+  }
+
+  let user = null;
+  let identifier = '';
+
+  if (channel === 'email') {
+    if (!email) return res.status(400).json({ message: 'Email is required' });
+    identifier = email;
+    user = await User.findOne({ email });
+  } else {
+    if (!phoneRaw) return res.status(400).json({ message: 'Phone number is required' });
+    if (!whatsappConfigured()) {
+      return res.status(503).json({ message: 'WhatsApp password reset is not configured on this server' });
+    }
+    const normalized = normalizeWhatsAppRecipient(phoneRaw, process.env.WHATSAPP_DEFAULT_COUNTRY_CODE);
+    if (!normalized.ok) return res.status(400).json({ message: normalized.error || 'Invalid phone number' });
+    identifier = normalized.e164;
+    user = await User.findOne({ phone: normalized.e164 });
+  }
+
+  const genericMessage = 'If an account exists, a verification code has been sent.';
+
+  if (!user) {
+    return res.json({ message: genericMessage });
+  }
+
+  const since = new Date(Date.now() - 60 * 60 * 1000);
+  const recent = await PasswordResetOtp.countDocuments({ user_id: user._id, createdAt: { $gte: since } });
+  if (recent >= Number(process.env.OTP_MAX_PER_HOUR || 5)) {
+    return res.status(429).json({ message: 'Too many code requests. Try again in an hour.' });
+  }
+
+  const code = generateNumericOtp(6);
+  const expiresMinutes = Math.round(OTP_TTL_MS / 60000);
+
+  await PasswordResetOtp.create({
+    user_id: user._id,
+    channel,
+    identifier,
+    code_hash: hashOtpCode(code),
+    expires_at: new Date(Date.now() + OTP_TTL_MS),
+  });
+
+  let sent = { ok: false };
+  if (channel === 'email') {
+    sent = await sendEmailOtp({ to: user.email, name: user.name, code, expiresMinutes });
+  } else {
+    sent = await sendWhatsAppOtp({ to: identifier, code, expiresMinutes });
+  }
+
+  if (!sent.ok && process.env.NODE_ENV === 'production') {
+    return res.status(502).json({ message: sent.error || 'Failed to send verification code' });
+  }
+
+  await logAuditEvent(req, {
+    actor_id: user._id,
+    actor_role: user.role,
+    action: 'auth.forgot_password',
+    target_type: 'user',
+    target_id: user._id,
+    details: { channel },
+  });
+
+  res.json({
+    message: genericMessage,
+    channel,
+    ...(process.env.NODE_ENV !== 'production' ? { dev_code: code } : {}),
+  });
+}
+
+async function verifyResetCode(req, res) {
+  const channel = String(req.body?.channel || 'email').toLowerCase();
+  const code = String(req.body?.code || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const phoneRaw = String(req.body?.phone || '').trim();
+
+  if (!code || code.length < 4) {
+    return res.status(400).json({ message: 'Verification code is required' });
+  }
+
+  let identifier = '';
+  if (channel === 'email') {
+    if (!email) return res.status(400).json({ message: 'Email is required' });
+    identifier = email;
+  } else {
+    const normalized = normalizeWhatsAppRecipient(phoneRaw, process.env.WHATSAPP_DEFAULT_COUNTRY_CODE);
+    if (!normalized.ok) return res.status(400).json({ message: normalized.error || 'Invalid phone number' });
+    identifier = normalized.e164;
+  }
+
+  const row = await PasswordResetOtp.findOne({
+    channel,
+    identifier,
+    verified_at: null,
+    expires_at: { $gt: new Date() },
+  })
+    .select('+code_hash +reset_session_hash')
+    .sort({ createdAt: -1 });
+
+  if (!row) {
+    return res.status(400).json({ message: 'No active verification code. Request a new one.' });
+  }
+
+  if (row.attempts >= row.max_attempts) {
+    return res.status(429).json({ message: 'Too many attempts. Request a new code.' });
+  }
+
+  row.attempts += 1;
+  await row.save();
+
+  if (row.code_hash !== hashOtpCode(code)) {
+    return res.status(400).json({ message: 'Invalid verification code' });
+  }
+
+  const resetSessionToken = issueResetSessionToken();
+  row.verified_at = new Date();
+  row.reset_session_hash = hashResetSession(resetSessionToken);
+  row.expires_at = new Date(Date.now() + RESET_SESSION_TTL_MS);
+  await row.save();
+
+  await logAuditEvent(req, {
+    actor_id: row.user_id,
+    actor_role: 'anonymous',
+    action: 'auth.verify_reset_code',
+    target_type: 'user',
+    target_id: row.user_id,
+  });
+
+  res.json({
+    message: 'Code verified',
+    reset_session_token: resetSessionToken,
+  });
+}
+
+async function resetPasswordWithCode(req, res) {
+  const resetSessionToken = String(req.body?.reset_session_token || '').trim();
+  const nextPassword = String(req.body?.password || '');
+
+  if (!resetSessionToken) return res.status(400).json({ message: 'Reset session token is required' });
+  if (nextPassword.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters' });
+
+  const row = await PasswordResetOtp.findOne({
+    reset_session_hash: hashResetSession(resetSessionToken),
+    verified_at: { $ne: null },
+    expires_at: { $gt: new Date() },
+  }).select('+reset_session_hash');
+
+  if (!row) {
+    return res.status(400).json({ message: 'Reset session is invalid or expired. Start again.' });
+  }
+
+  const user = await User.findById(row.user_id).select('+password');
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  user.password = nextPassword;
+  user.password_reset_token_hash = '';
+  user.password_reset_expires_at = null;
+  await user.save();
+
+  row.reset_session_hash = '';
+  await row.save();
+
+  await logAuditEvent(req, {
+    actor_id: user._id,
+    actor_role: user.role,
+    action: 'auth.reset_password',
+    target_type: 'user',
+    target_id: user._id,
+    details: { method: 'otp' },
+  });
+
+  res.json({ message: 'Password reset successful' });
+}
+
+async function forgotPasswordLegacy(req, res) {
   const email = String(req.body?.email || '')
     .trim()
     .toLowerCase();
@@ -290,5 +535,8 @@ module.exports = {
   sendEmailVerification,
   verifyEmail,
   forgotPassword,
+  verifyResetCode,
+  resetPasswordWithCode,
+  forgotPasswordLegacy,
   resetPassword,
 };

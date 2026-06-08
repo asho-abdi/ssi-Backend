@@ -1,10 +1,12 @@
 const mongoose = require('mongoose');
+const { calcCourseMinutes, minutesToHours } = require('../utils/courseDuration');
 const DIFFICULTY_LEVELS = ['all', 'beginner', 'intermediate', 'expert'];
 
 const lessonSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     video_url: { type: String, required: true, trim: true },
+    duration: { type: String, default: '', trim: true },
     order: { type: Number, default: 0 },
   },
   { _id: true }
@@ -98,7 +100,10 @@ const courseSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     sale_price: { type: Number, default: 0, min: 0 },
     difficulty_level: { type: String, enum: DIFFICULTY_LEVELS, default: 'all' },
-    duration: { type: Number, required: true, min: 0 },
+    /** Stored in decimal hours for backward compat — auto-calculated from lessons on save. */
+    duration: { type: Number, default: 0, min: 0 },
+    /** Auto-calculated total duration in minutes (sum of all lesson durations). */
+    total_minutes: { type: Number, default: 0, min: 0 },
     thumbnail: { type: String, default: '' },
     video_url: { type: String, default: '' },
     category_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null, index: true },
@@ -118,10 +123,31 @@ const courseSchema = new mongoose.Schema(
         { _id: false }
       ),
     ],
+    /** Bullet lines for storefront “Material Includes” sidebar (admin-entered). */
+    material_includes: [{ type: String, trim: true }],
+    /** Override global affiliate % for this course; null = platform default */
+    affiliate_commission_percent: { type: Number, min: 0, max: 100, default: null },
   },
   { timestamps: true }
 );
 
 courseSchema.index({ title: 'text', description: 'text' });
+
+/**
+ * Auto-calculate total_minutes and duration (hours) from lesson content
+ * every time the course document is saved.
+ * When lessons carry no duration metadata, total_minutes stays 0 and
+ * any manually-set duration is preserved as-is.
+ */
+courseSchema.pre('save', function (next) {
+  const mins = calcCourseMinutes(this);
+  this.total_minutes = mins;
+  if (mins > 0) {
+    // Lessons have explicit durations → always win
+    this.duration = minutesToHours(mins);
+  }
+  // If mins === 0 keep whatever duration was set (manual fallback or 0)
+  next();
+});
 
 module.exports = mongoose.model('Course', courseSchema);

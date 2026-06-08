@@ -18,6 +18,12 @@ const orderSchema = new mongoose.Schema(
     payment_intent_id: { type: String, default: '' },
     payment_status_detail: { type: String, default: '' },
     paid_at: { type: Date },
+    /** Mirrors enrollment flag — excluded orders are omitted from revenue / commission stats */
+    exclude_from_teacher_earnings: { type: Boolean, default: false, index: true },
+    /** Student affiliate who earned commission on this order */
+    referrer_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    affiliate_commission_amount: { type: Number, min: 0, default: 0 },
+    pricing_link_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CustomPricingLink', default: null, index: true },
   },
   { timestamps: true }
 );

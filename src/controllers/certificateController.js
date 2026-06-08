@@ -8,6 +8,7 @@ const User = require('../models/User');
 const Progress = require('../models/Progress');
 const CertificateTemplate = require('../models/CertificateTemplate');
 const Counter = require('../models/Counter');
+const { formatDurationLabel } = require('../utils/courseDuration');
 
 const DEFAULT_TEMPLATE = {
   org_name: 'Success Skills Institute',
@@ -345,13 +346,15 @@ async function downloadPdf(req, res) {
     await ensureCertificateHasSerial(cert);
   }
 
-  const courseDoc = await Course.findById(courseId).select('title').lean();
+  const courseDoc = await Course.findById(courseId).select('title total_minutes duration').lean();
   const liveTitle = courseDoc?.title != null ? String(courseDoc.title).trim() : '';
   if (!String(cert.course_title || '').trim() && liveTitle) {
     cert.course_title = liveTitle;
     await cert.save();
   }
   const courseTitle = pickDisplayCourseTitle(cert.course_title, liveTitle);
+  const courseDurationMins = Number(courseDoc?.total_minutes || 0) || Math.round(Number(courseDoc?.duration || 0) * 60);
+  const courseDurationText = formatDurationLabel(courseDurationMins);
 
   const issueDate = cert.issue_date || new Date();
   const template = await getOrCreateTemplate();
@@ -436,6 +439,15 @@ async function downloadPdf(req, res) {
     color: layout.course.color,
   });
 
+  if (courseDurationText) {
+    doc.font('Helvetica').fontSize(11).fillColor('#4a6fa5').text(
+      `Course Duration: ${courseDurationText}`,
+      layout.course.x,
+      layout.course.y + 32,
+      { width: layout.course.width, align: 'center' }
+    );
+  }
+
   doc.font('Helvetica-Bold').fontSize(layout.serial.size).fillColor(layout.serial.color).text(serialNumber, layout.serial.x, layout.serial.y, {
     width: layout.serial.width,
     align: 'center',
@@ -462,11 +474,12 @@ async function verifyPublic(req, res) {
   }
   const cert = await Certificate.findOne({ serial_number: serialNumber })
     .populate('user_id', 'name')
-    .populate('course_id', 'title')
+    .populate('course_id', 'title total_minutes duration')
     .lean();
   if (!cert) {
     return res.status(404).json({ valid: false, message: 'Certificate not found' });
   }
+  const vMins = Number(cert.course_id?.total_minutes || 0) || Math.round(Number(cert.course_id?.duration || 0) * 60);
   res.json({
     valid: true,
     certificate: {
@@ -475,6 +488,7 @@ async function verifyPublic(req, res) {
       issue_date: cert.issue_date,
       student_name: cert.user_id?.name || 'Student',
       course_title: pickDisplayCourseTitle(cert.course_title, cert.course_id?.title),
+      course_duration: formatDurationLabel(vMins) || null,
       verification_url: `/certificate/verify/${formatSerialNumber(cert.serial_number)}`,
     },
   });

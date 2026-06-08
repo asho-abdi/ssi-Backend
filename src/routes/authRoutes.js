@@ -9,9 +9,12 @@ const {
   sendEmailVerification,
   verifyEmail,
   forgotPassword,
+  verifyResetCode,
+  resetPasswordWithCode,
   resetPassword,
 } = require('../controllers/authController');
 const { protect, requireRoles } = require('../middleware/auth');
+const { passwordResetRateLimit } = require('../middleware/passwordResetRateLimit');
 
 const router = express.Router();
 
@@ -22,15 +25,45 @@ router.post(
     body('username').trim().notEmpty(),
     body('email').isEmail().normalizeEmail(),
     body('password').isLength({ min: 6 }),
+    body('phone').trim().notEmpty().withMessage('Phone number is required'),
+    body('referral_code').optional().trim(),
   ],
   register
 );
 router.post(
   '/login',
-  [body('email').isEmail().normalizeEmail(), body('password').notEmpty()],
+  [
+    body('login').trim().notEmpty().withMessage('Email or username is required'),
+    body('password').notEmpty(),
+  ],
   login
 );
-router.post('/forgot-password', [body('email').isEmail().normalizeEmail()], forgotPassword);
+router.post(
+  '/forgot-password',
+  passwordResetRateLimit,
+  [
+    body('channel').optional().isIn(['email', 'whatsapp']),
+    body('email').optional().isEmail().normalizeEmail(),
+    body('phone').optional().trim(),
+  ],
+  forgotPassword
+);
+router.post(
+  '/verify-reset-code',
+  passwordResetRateLimit,
+  [
+    body('channel').isIn(['email', 'whatsapp']),
+    body('code').trim().notEmpty(),
+    body('email').optional().isEmail().normalizeEmail(),
+    body('phone').optional().trim(),
+  ],
+  verifyResetCode
+);
+router.post(
+  '/reset-password-with-code',
+  [body('reset_session_token').trim().notEmpty(), body('password').isLength({ min: 6 })],
+  resetPasswordWithCode
+);
 router.post('/reset-password', [body('token').trim().notEmpty(), body('password').isLength({ min: 6 })], resetPassword);
 router.get('/verify-email', verifyEmail);
 router.get('/me', protect, me);

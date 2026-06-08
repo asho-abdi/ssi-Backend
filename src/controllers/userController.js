@@ -6,6 +6,11 @@ const { Enrollment } = require('../models/Enrollment');
 const Progress = require('../models/Progress');
 const Review = require('../models/Review');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
+const { earningsEligiblePaidOrderQuery } = require('../utils/earningsEligibility');
+const {
+  parseExcludeFromTeacherEarnings,
+  upsertPaidOrderForEnrollment,
+} = require('../utils/earningsEligibility');
 const { normalizePermissions } = require('../utils/permissions');
 const { logAuditEvent } = require('../utils/auditLog');
 
@@ -164,7 +169,7 @@ async function updateUserRole(req, res) {
 
 async function updateUser(req, res) {
   const { id } = req.params;
-  const { name, email, role, teacher_fee, permissions } = req.body || {};
+  const { name, email, role, teacher_fee, permissions, avatar_url, phone, bio } = req.body || {};
   const user = await User.findById(id);
   if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -215,6 +220,10 @@ async function updateUser(req, res) {
     user.teacher_fee = fee;
   }
 
+  if (avatar_url != null) user.avatar_url = String(avatar_url).trim();
+  if (phone != null) user.phone = String(phone).trim();
+  if (bio != null) user.bio = String(bio).trim();
+
   await user.save();
   await logAuditEvent(req, {
     action: 'admin.user_update',
@@ -231,7 +240,9 @@ async function updateUser(req, res) {
     phone: user.phone || '',
     bio: user.bio || '',
     avatar_url: user.avatar_url || '',
+    account_status: user.account_status || 'active',
     permissions: normalizePermissions(user.permissions, user.role),
+    instructor_settings: user.instructor_settings,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   });
@@ -239,7 +250,8 @@ async function updateUser(req, res) {
 
 async function grantCourseAccess(req, res) {
   const { id } = req.params;
-  const { course_id, amount } = req.body;
+  const { course_id, amount, exclude_from_teacher_earnings: excludeFromTeacherEarningsRaw } = req.body;
+  const excludeFromTeacherEarnings = parseExcludeFromTeacherEarnings(excludeFromTeacherEarningsRaw);
   if (!course_id) {
     return res.status(400).json({ message: 'course_id is required' });
   }
@@ -263,50 +275,19 @@ async function grantCourseAccess(req, res) {
   const originalAmount = Number.isFinite(Number(course.price)) ? Number(course.price) : finalAmount;
   const discountAmount = Math.max(0, Number((originalAmount - finalAmount).toFixed(2)));
   const instructorPercentage = await getInstructorPercentage();
-  const split = calculateEarnings(finalAmount, instructorPercentage);
-
-  let order = await Order.findOne({ user_id: student._id, course_id: course._id });
-  if (!order) {
-    order = await Order.create({
-      user_id: student._id,
-      course_id: course._id,
-      instructor_id: course.teacher_id,
-      original_amount: originalAmount,
-      discount_amount: discountAmount,
-      amount: finalAmount,
-      instructor_percentage: split.instructor_percentage,
-      instructor_earning: split.instructor_earning,
-      admin_earning: split.admin_earning,
-      status: 'paid',
-      payment_provider: 'manual',
-      payment_method: 'admin_manual',
-      payment_status_detail: 'offline_confirmed',
-      paid_at: new Date(),
-    });
-  } else {
-    order.instructor_id = course.teacher_id;
-    order.original_amount = originalAmount;
-    order.discount_amount = discountAmount;
-    order.amount = finalAmount;
-    order.instructor_percentage = split.instructor_percentage;
-    order.instructor_earning = split.instructor_earning;
-    order.admin_earning = split.admin_earning;
-    order.status = 'paid';
-    order.payment_provider = 'manual';
-    order.payment_method = 'admin_manual';
-    order.payment_status_detail = 'offline_confirmed';
-    order.paid_at = new Date();
-    await order.save();
-  }
 
   let enrollment = await Enrollment.findOne({ student_id: student._id, course_id: course._id });
+  const grantNote = excludeFromTeacherEarnings
+    ? 'Granted by admin (excluded from teacher earnings — e.g. WordPress migration)'
+    : 'Granted by admin';
   if (!enrollment) {
     enrollment = await Enrollment.create({
       student_id: student._id,
       course_id: course._id,
       amount: finalAmount,
       status: 'approved',
-      admin_note: 'Granted by admin',
+      admin_note: grantNote,
+      exclude_from_teacher_earnings: excludeFromTeacherEarnings,
       reviewed_by: req.userId,
       reviewed_at: new Date(),
       approved_at: new Date(),
@@ -314,21 +295,42 @@ async function grantCourseAccess(req, res) {
   } else {
     enrollment.amount = finalAmount;
     enrollment.status = 'approved';
-    enrollment.admin_note = 'Granted by admin';
+    enrollment.admin_note = grantNote;
+    enrollment.exclude_from_teacher_earnings = excludeFromTeacherEarnings;
     enrollment.reviewed_by = req.userId;
     enrollment.reviewed_at = new Date();
     enrollment.approved_at = new Date();
     await enrollment.save();
   }
 
+  const order = await upsertPaidOrderForEnrollment({
+    studentId: student._id,
+    courseId: course._id,
+    instructorId: course.teacher_id,
+    amount: finalAmount,
+    originalAmount,
+    discountAmount,
+    instructorPercentage,
+    excludeFromTeacherEarnings,
+    paymentMethod: excludeFromTeacherEarnings ? 'admin_migrated' : 'admin_manual',
+    paymentStatusDetail: excludeFromTeacherEarnings ? 'earnings_excluded' : 'offline_confirmed',
+  });
+
   await logAuditEvent(req, {
     action: 'admin.grant_course_access',
     target_type: 'user',
     target_id: student._id,
-    details: { course_id: course._id, order_id: order._id, amount: finalAmount },
+    details: {
+      course_id: course._id,
+      order_id: order._id,
+      amount: finalAmount,
+      exclude_from_teacher_earnings: excludeFromTeacherEarnings,
+    },
   });
   res.json({
-    message: `Access granted to ${student.name} for "${course.title}"`,
+    message: excludeFromTeacherEarnings
+      ? `Access granted to ${student.name} for "${course.title}" (excluded from teacher earnings)`
+      : `Access granted to ${student.name} for "${course.title}"`,
     order,
     enrollment,
   });
@@ -439,14 +441,149 @@ async function getStudentReport(req, res) {
   });
 }
 
+async function getInstructorAnalytics(req, res) {
+  const instructorId = req.params.id;
+  const instructor = await User.findById(instructorId).select('name email role createdAt').lean();
+  if (!instructor) return res.status(404).json({ message: 'Instructor not found' });
+  if (instructor.role !== 'teacher') return res.status(400).json({ message: 'User is not an instructor' });
+
+  const courses = await Course.find({ teacher_id: instructorId }).select('_id title price createdAt').lean();
+  const courseIds = courses.map((c) => c._id);
+  const instructorPercentage = await getInstructorPercentage();
+
+  const [paidOrders, enrollments, reviews] = await Promise.all([
+    Order.find(earningsEligiblePaidOrderQuery({ course_id: { $in: courseIds } }))
+      .populate('user_id', 'name email')
+      .populate('course_id', 'title')
+      .lean(),
+    Enrollment.countDocuments({ course_id: { $in: courseIds }, status: 'approved' }),
+    Review.countDocuments({ course_id: { $in: courseIds } }),
+  ]);
+
+  let totalRevenue = 0;
+  let instructorEarnings = 0;
+  const byCourse = {};
+
+  for (const order of paidOrders) {
+    const amount = Number(order.amount || 0);
+    totalRevenue += amount;
+    const earning =
+      Number(order.instructor_earning || 0) > 0
+        ? Number(order.instructor_earning || 0)
+        : calculateEarnings(amount, instructorPercentage).instructor_earning;
+    instructorEarnings += earning;
+
+    const cid = String(order.course_id?._id || order.course_id || '');
+    if (!byCourse[cid]) {
+      byCourse[cid] = {
+        course_id: cid,
+        course_title: order.course_id?.title || 'Course',
+        sales: 0,
+        revenue: 0,
+        instructor_earnings: 0,
+      };
+    }
+    byCourse[cid].sales += 1;
+    byCourse[cid].revenue += amount;
+    byCourse[cid].instructor_earnings += earning;
+  }
+
+  res.json({
+    instructor,
+    stats: {
+      courses_published: courses.length,
+      total_enrollments: enrollments,
+      total_reviews: reviews,
+      paid_sales: paidOrders.length,
+      gross_revenue: Number(totalRevenue.toFixed(2)),
+      instructor_earnings: Number(instructorEarnings.toFixed(2)),
+      instructor_percentage: instructorPercentage,
+    },
+    course_breakdown: Object.values(byCourse).map((row) => ({
+      ...row,
+      revenue: Number(row.revenue.toFixed(2)),
+      instructor_earnings: Number(row.instructor_earnings.toFixed(2)),
+    })),
+    recent_sales: paidOrders
+      .slice()
+      .sort((a, b) => new Date(b.paid_at || b.createdAt) - new Date(a.paid_at || a.createdAt))
+      .slice(0, 10)
+      .map((o) => ({
+        order_id: o._id,
+        course_title: o.course_id?.title || 'Course',
+        student_name: o.user_id?.name || o.user_id?.email || 'Student',
+        amount: Number(o.amount || 0),
+        paid_at: o.paid_at || o.createdAt,
+      })),
+  });
+}
+
+async function listInstructorsSummary(req, res) {
+  const instructorPercentage = await getInstructorPercentage();
+
+  const [teachers, courseCounts, orderAgg, withdrawalAgg] = await Promise.all([
+    User.find({ role: 'teacher' })
+      .select('name email phone avatar_url teacher_fee account_status createdAt instructor_settings')
+      .sort({ createdAt: -1 })
+      .lean(),
+    Course.aggregate([
+      { $group: { _id: '$teacher_id', count: { $sum: 1 } } },
+    ]),
+    Order.aggregate([
+      { $match: { instructor_id: { $exists: true, $ne: null }, status: 'paid' } },
+      { $group: { _id: '$instructor_id', gross: { $sum: '$amount' }, earning: { $sum: '$instructor_earning' } } },
+    ]),
+    require('../models/WithdrawalRequest').aggregate([
+      { $match: { status: 'paid' } },
+      { $group: { _id: '$instructor_id', total: { $sum: '$amount' } } },
+    ]),
+  ]);
+
+  const courseMap = Object.fromEntries(courseCounts.map((r) => [String(r._id), r.count]));
+  const orderMap = Object.fromEntries(orderAgg.map((r) => [String(r._id), { gross: r.gross, earning: r.earning }]));
+  const wdMap = Object.fromEntries(withdrawalAgg.map((r) => [String(r._id), r.total]));
+
+  const rows = teachers.map((t) => {
+    const id = String(t._id);
+    const orderData = orderMap[id] || { gross: 0, earning: 0 };
+    const earned = orderData.earning > 0
+      ? orderData.earning
+      : calculateEarnings(orderData.gross, instructorPercentage).instructor_earning;
+    const withdrawn = wdMap[id] || 0;
+    return {
+      ...t,
+      total_courses: courseMap[id] || 0,
+      commission_rate: t.teacher_fee > 0 ? t.teacher_fee : instructorPercentage,
+      earnings: Number(earned.toFixed(2)),
+      withdrawal: Number(withdrawn.toFixed(2)),
+      balance: Number((earned - withdrawn).toFixed(2)),
+    };
+  });
+
+  res.json({ instructors: rows, platform_commission: instructorPercentage });
+}
+
+async function updateAccountStatus(req, res) {
+  const { status } = req.body || {};
+  const allowed = ['active', 'pending', 'suspended'];
+  if (!allowed.includes(status)) return res.status(400).json({ message: `status must be one of: ${allowed.join(', ')}` });
+  const user = await User.findByIdAndUpdate(req.params.id, { account_status: status }, { new: true }).select('-password').lean();
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  await logAuditEvent(req, { action: 'admin.account_status_change', target_type: 'user', target_id: req.params.id, details: { status } });
+  res.json(user);
+}
+
 module.exports = {
   listUsers,
   listUsersGroupedByRole,
   listUsersByRole,
+  listInstructorsSummary,
   getStudentReport,
+  getInstructorAnalytics,
   createUserByAdmin,
   updateUser,
   updateUserRole,
+  updateAccountStatus,
   grantCourseAccess,
   deleteUser,
 };

@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const Course = require('../models/Course');
 const Coupon = require('../models/Coupon');
+const { resolveByToken } = require('./pricingLinkController');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
 
 function getCoursePrice(course) {
@@ -47,10 +48,20 @@ function normalizePaidOrderSplit(order, defaultInstructorPercentage) {
 }
 
 async function createOrder(req, res) {
-  const { course_id, coupon_code } = req.body;
+  const { course_id, coupon_code, pricing_token } = req.body;
   const course = await Course.findById(course_id);
   if (!course) return res.status(404).json({ message: 'Course not found' });
-  const originalAmount = getCoursePrice(course);
+
+  let pricingLinkId = null;
+  let originalAmount = getCoursePrice(course);
+
+  if (pricing_token) {
+    const linkResult = await resolveByToken(pricing_token, course_id);
+    if (!linkResult.ok) return res.status(400).json({ message: linkResult.error });
+    originalAmount = Number(linkResult.link.custom_price || 0);
+    pricingLinkId = linkResult.link._id;
+  }
+
   let coupon = null;
   if (coupon_code) {
     coupon = await Coupon.findOne({ code: String(coupon_code).trim().toUpperCase(), active: true });
@@ -75,6 +86,7 @@ async function createOrder(req, res) {
     order.discount_amount = discountAmount;
     order.amount = amount;
     order.coupon_code = normalizedCoupon;
+    order.pricing_link_id = pricingLinkId;
     order.status = 'unpaid';
     order.payment_provider = '';
     order.payment_method = '';
@@ -95,6 +107,7 @@ async function createOrder(req, res) {
     discount_amount: discountAmount,
     amount,
     coupon_code: normalizedCoupon,
+    pricing_link_id: pricingLinkId,
     status: 'unpaid',
   });
   res.status(201).json(order);

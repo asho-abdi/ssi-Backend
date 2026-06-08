@@ -1,7 +1,7 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 const mongoose = require('mongoose');
 const { startMongoConnection } = require('./config/db');
 
@@ -23,13 +23,39 @@ const auditLogRoutes = require('./routes/auditLogRoutes');
 const discussionRoutes = require('./routes/discussionRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const announcementRoutes = require('./routes/announcementRoutes');
-const webhookRoutes = require('./routes/webhookRoutes');
+const offlineEnrollmentRoutes = require('./routes/offlineEnrollmentRoutes');
+const contactRoutes = require('./routes/contactRoutes');
+const refundRoutes = require('./routes/refundRoutes');
+const mediaMetaRoutes = require('./routes/mediaMetaRoutes');
+const affiliateRoutes = require('./routes/affiliateRoutes');
+const adminAffiliateRoutes = require('./routes/adminAffiliateRoutes');
+const pricingLinkRoutes = require('./routes/pricingLinkRoutes');
+const bundleRoutes = require('./routes/bundleRoutes');
+const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const reportRoutes = require('./routes/reportRoutes');
+const marketingRoutes = require('./routes/marketingRoutes');
+const eventRoutes = require('./routes/eventRoutes');
 
 const app = express();
 
-// Railway injects PORT — must not fall back incorrectly when PORT is set.
-const _port = Number(process.env.PORT);
-const PORT = Number.isInteger(_port) && _port > 0 ? _port : 5000;
+/** Never trust `Number('')` → 0 → fallback; Railway must use injected PORT exactly. */
+function resolveListenPort() {
+  const raw = process.env.PORT;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return 5000;
+  }
+  const n = parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n < 1 || n > 65535) {
+    console.error('[server] Invalid PORT env; using 5000. Raw:', JSON.stringify(raw));
+    return 5000;
+  }
+  return n;
+}
+
+const PORT = resolveListenPort();
+/** On Railway, omit host so Node uses the default dual-stack bind (:: + IPv4-mapped). Plain 0.0.0.0 can miss some edge paths → 502. Local dev: force 0.0.0.0 unless LISTEN_HOST is set. */
+const IS_RAILWAY = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+const LISTEN_HOST = process.env.LISTEN_HOST || (IS_RAILWAY ? undefined : '0.0.0.0');
 
 /**
  * Never throw: a thrown error here runs before app.listen() and makes Railway show
@@ -58,39 +84,69 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
+// ---------------------------------------------------------------------------
+// Earliest routes — no CORS/body middleware; always fast for Railway / probes
+// ---------------------------------------------------------------------------
+app.get('/', (_req, res) => {
+  try {
+    console.log('[server] GET /');
+    res.type('text').send('Backend is LIVE 🚀');
+  } catch (err) {
+    console.error('[server] GET / error:', err);
+    res.status(500).type('text').send('Server error');
+  }
+});
+
+app.get('/favicon.ico', (_req, res) => {
+  try {
+    res.status(204).end();
+  } catch (err) {
+    console.error('[server] favicon error:', err);
+    res.status(204).end();
+  }
+});
+
+app.get('/health', (_req, res) => {
+  try {
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[server] GET /health error:', err);
+    res.status(500).json({ ok: false });
+  }
+});
+
+app.get('/api/health', (_req, res) => {
+  try {
+    const dbReady = mongoose.connection.readyState === 1;
+    res.json({
+      ok: dbReady,
+      db: dbReady ? 'connected' : 'connecting',
+    });
+  } catch (err) {
+    console.error('[server] GET /api/health error:', err);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Middleware & API
+// ---------------------------------------------------------------------------
 app.use(
   cors({
     origin: true,
   })
 );
 
-app.use('/webhook', webhookRoutes);
-
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads/images', express.static(path.join(__dirname, '..', 'uploads', 'images')));
 
-app.get('/', (_req, res) => {
-  res.type('html').send('Backend is LIVE 🚀');
-});
-
-function healthPayload() {
-  const dbConnected = mongoose.connection.readyState === 1;
-  return {
-    ok: true,
-    service: 'api',
-    env: process.env.NODE_ENV || 'development',
-    db: dbConnected ? 'connected' : 'disconnected',
-    time: new Date().toISOString(),
-  };
-}
-
-/** Some hosts default health checks to /health — keep in sync with /api/health */
-app.get('/health', (_req, res) => {
-  res.json(healthPayload());
-});
-
-app.get('/api/health', (_req, res) => {
-  res.json(healthPayload());
+/** Avoid opaque 500s when the API is hit before Atlas connects (server listens immediately). */
+app.use('/api', (req, res, next) => {
+  if (mongoose.connection.readyState === 1) return next();
+  return res.status(503).json({
+    message:
+      'Database is not ready yet. Wait for "[db] MongoDB connected successfully" in the backend terminal, then retry.',
+  });
 });
 
 app.use('/api/auth', authRoutes);
@@ -104,6 +160,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/media', mediaMetaRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/monetization', monetizationRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
@@ -111,6 +168,17 @@ app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/discussions', discussionRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/announcements', announcementRoutes);
+app.use('/api/offline-enrollments', offlineEnrollmentRoutes);
+app.use('/api/contact', contactRoutes);
+app.use('/api/refunds', refundRoutes);
+app.use('/api/affiliate', affiliateRoutes);
+app.use('/api/admin/affiliate', adminAffiliateRoutes);
+app.use('/api/pricing-links', pricingLinkRoutes);
+app.use('/api/bundles', bundleRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/marketing', marketingRoutes);
+app.use('/api/events', eventRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ message: 'Not found' });
@@ -124,12 +192,26 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ message });
 });
 
-// Bind: omit host so Node listens on the unspecified address (IPv6 :: when available, else IPv4).
-// Binding only '0.0.0.0' can miss IPv6-only internal routes on some hosts → edge 502.
-app.listen(PORT, () => {
+function listenCallback() {
   console.log(
-    `[server] Listening on port ${PORT} (PORT env=${JSON.stringify(process.env.PORT ?? null)}, NODE_ENV=${process.env.NODE_ENV || 'development'})`
+    `[server] Listening port=${PORT} host=${LISTEN_HOST ?? '(Node default)'} raw_PORT=${JSON.stringify(
+      process.env.PORT ?? null
+    )} railway=${IS_RAILWAY} NODE_ENV=${process.env.NODE_ENV || 'development'}`
   );
-});
+}
+
+function onListenError(err) {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(
+      `[server] Port ${PORT} is already in use. Stop the other Node process (Task Manager / close old terminal) or set PORT=5001 in .env`
+    );
+  } else {
+    console.error('[server] Failed to start:', err.message || err);
+  }
+  process.exit(1);
+}
+
+const httpServer = LISTEN_HOST ? app.listen(PORT, LISTEN_HOST, listenCallback) : app.listen(PORT, listenCallback);
+httpServer.on('error', onListenError);
 
 startMongoConnection();

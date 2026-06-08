@@ -24,10 +24,20 @@ const userSchema = new mongoose.Schema(
       linkedin: { type: String, trim: true, default: '' },
       website: { type: String, trim: true, default: '' },
     },
+    account_status: {
+      type: String,
+      enum: ['active', 'pending', 'suspended'],
+      default: 'active',
+      index: true,
+    },
     instructor_settings: {
       public_profile: { type: Boolean, default: true },
       notifications: { type: Boolean, default: true },
     },
+    /** Unique code for student affiliate referrals (e.g. USER123) */
+    referral_code: { type: String, unique: true, sparse: true, trim: true, uppercase: true, index: true },
+    referred_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    referred_at: { type: Date, default: null },
     permissions: {
       createCourse: { type: Boolean },
       editCourse: { type: Boolean },
@@ -46,6 +56,18 @@ userSchema.pre('save', async function hashPassword(next) {
   if (!this.isModified('password')) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();
+});
+
+userSchema.pre('save', async function ensureReferralCode(next) {
+  try {
+    if (this.role === 'student' && !this.referral_code) {
+      const { generateUniqueReferralCode } = require('../utils/referral');
+      this.referral_code = await generateUniqueReferralCode();
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 userSchema.methods.comparePassword = function comparePassword(candidate) {

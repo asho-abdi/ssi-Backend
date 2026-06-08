@@ -1,9 +1,9 @@
 const Course = require('../models/Course');
 const Progress = require('../models/Progress');
-const Order = require('../models/Order');
 const { Enrollment } = require('../models/Enrollment');
 const mongoose = require('mongoose');
-const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
+const { getInstructorPercentage } = require('../utils/commission');
+const { upsertPaidOrderForEnrollment } = require('../utils/earningsEligibility');
 
 function getCoursePrice(course) {
   const sale = Number(course?.sale_price || 0);
@@ -108,7 +108,9 @@ async function submitPaymentProof(req, res) {
   const paymentProof = String(req.body?.payment_proof_url || '').trim();
   const transactionId = String(req.body?.transaction_id || '').trim();
   if (!paymentProof && !transactionId) {
-    return res.status(400).json({ message: 'payment_proof_url or transaction_id is required' });
+    return res.status(400).json({
+      message: 'Enter a transaction ID or upload a payment screenshot (screenshot is optional if you provide a transaction ID)',
+    });
   }
 
   enrollment.payment_proof_url = paymentProof;
@@ -145,36 +147,20 @@ async function reviewEnrollment(req, res) {
 
   if (action === 'approve') {
     const instructorPercentage = await getInstructorPercentage();
-    const earnings = calculateEarnings(enrollment.amount, instructorPercentage);
     const instructorId = enrollment.course_id?.teacher_id || null;
-    const existingOrder = await Order.findOne({ user_id: enrollment.student_id, course_id: enrollment.course_id });
-    if (!existingOrder) {
-      await Order.create({
-        user_id: enrollment.student_id,
-        course_id: enrollment.course_id,
-        instructor_id: instructorId,
-        original_amount: enrollment.amount,
-        discount_amount: 0,
-        amount: enrollment.amount,
-        ...earnings,
-        status: 'paid',
-        payment_provider: 'manual',
-        payment_method: 'admin_manual_verification',
-        payment_status_detail: 'offline_confirmed',
-        paid_at: new Date(),
-      });
-    } else if (existingOrder.status !== 'paid') {
-      existingOrder.instructor_id = existingOrder.instructor_id || instructorId;
-      existingOrder.instructor_percentage = earnings.instructor_percentage;
-      existingOrder.instructor_earning = earnings.instructor_earning;
-      existingOrder.admin_earning = earnings.admin_earning;
-      existingOrder.status = 'paid';
-      existingOrder.payment_provider = 'manual';
-      existingOrder.payment_method = 'admin_manual_verification';
-      existingOrder.payment_status_detail = 'offline_confirmed';
-      existingOrder.paid_at = new Date();
-      await existingOrder.save();
-    }
+    const excludeFromTeacherEarnings = Boolean(enrollment.exclude_from_teacher_earnings);
+    await upsertPaidOrderForEnrollment({
+      studentId: enrollment.student_id,
+      courseId: enrollment.course_id,
+      instructorId,
+      amount: enrollment.amount,
+      originalAmount: enrollment.amount,
+      discountAmount: 0,
+      instructorPercentage,
+      excludeFromTeacherEarnings,
+      paymentMethod: 'admin_manual_verification',
+      paymentStatusDetail: excludeFromTeacherEarnings ? 'earnings_excluded' : 'offline_confirmed',
+    });
   }
 
   res.json({
@@ -200,7 +186,7 @@ async function getMyEnrollmentByCourse(req, res) {
   const enrollment = await Enrollment.findOne({ student_id: req.userId, course_id: courseId })
     .populate('course_id', 'title thumbnail pricing_type price sale_price lessons')
     .lean();
-  if (!enrollment) return res.status(404).json({ message: 'Enrollment not found' });
+  if (!enrollment) return res.json(null);
   const [enriched] = await enrichEnrollmentsWithProgress([enrollment]);
   res.json(enriched);
 }
@@ -210,10 +196,98 @@ async function listAllEnrollments(_req, res) {
     .populate('student_id', 'name email')
     .populate('course_id', 'title pricing_type price sale_price')
     .populate('reviewed_by', 'name email')
+    .populate('enrolled_by', 'name email')
     .sort({ createdAt: -1 })
     .lean();
   const withProgress = await enrichEnrollmentsWithProgress(rows);
   res.json(withProgress);
+}
+
+async function manualEnroll(req, res) {
+  if (req.userRole !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+  const { student_id, course_id, notes, exclude_from_teacher_earnings } = req.body || {};
+  if (!student_id || !course_id) {
+    return res.status(400).json({ message: 'student_id and course_id are required' });
+  }
+  const course = await Course.findById(course_id);
+  if (!course) return res.status(404).json({ message: 'Course not found' });
+
+  const amount = getCoursePrice(course);
+  let enrollment = await Enrollment.findOne({ student_id, course_id });
+  if (enrollment) {
+    if (enrollment.status === 'approved') {
+      return res.status(400).json({ message: 'Student already enrolled in this course' });
+    }
+    enrollment.status = 'approved';
+    enrollment.enrollment_type = 'manual';
+    enrollment.enrolled_by = req.userId;
+    enrollment.notes = String(notes || '').trim();
+    enrollment.approved_at = new Date();
+    enrollment.exclude_from_teacher_earnings = Boolean(exclude_from_teacher_earnings);
+    await enrollment.save();
+  } else {
+    enrollment = await Enrollment.create({
+      student_id,
+      course_id,
+      amount,
+      status: 'approved',
+      enrollment_type: 'manual',
+      enrolled_by: req.userId,
+      notes: String(notes || '').trim(),
+      approved_at: new Date(),
+      exclude_from_teacher_earnings: Boolean(exclude_from_teacher_earnings),
+    });
+  }
+
+  const instructorPercentage = await getInstructorPercentage();
+  await upsertPaidOrderForEnrollment({
+    studentId: student_id,
+    courseId: course_id,
+    instructorId: course.teacher_id || null,
+    amount,
+    originalAmount: amount,
+    discountAmount: 0,
+    instructorPercentage,
+    excludeFromTeacherEarnings: Boolean(exclude_from_teacher_earnings),
+    paymentMethod: 'admin_manual_enrollment',
+    paymentStatusDetail: exclude_from_teacher_earnings ? 'earnings_excluded' : 'manual_enrollment',
+  });
+
+  const populated = await Enrollment.findById(enrollment._id)
+    .populate('student_id', 'name email')
+    .populate('course_id', 'title')
+    .populate('enrolled_by', 'name email');
+  res.status(201).json({ message: 'Manual enrollment created', enrollment: populated });
+}
+
+async function cancelEnrollment(req, res) {
+  if (req.userRole !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+  const enrollment = await Enrollment.findById(req.params.id);
+  if (!enrollment) return res.status(404).json({ message: 'Enrollment not found' });
+  if (enrollment.status === 'cancelled') {
+    return res.status(400).json({ message: 'Enrollment already cancelled' });
+  }
+  enrollment.status = 'cancelled';
+  if (req.body?.notes != null) enrollment.notes = String(req.body.notes).trim();
+  enrollment.reviewed_by = req.userId;
+  enrollment.reviewed_at = new Date();
+  await enrollment.save();
+  res.json({ message: 'Enrollment cancelled', enrollment });
+}
+
+async function completeEnrollment(req, res) {
+  if (req.userRole !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+  const enrollment = await Enrollment.findById(req.params.id);
+  if (!enrollment) return res.status(404).json({ message: 'Enrollment not found' });
+  if (enrollment.status !== 'approved') {
+    return res.status(400).json({ message: 'Only approved enrollments can be marked completed' });
+  }
+  enrollment.status = 'completed';
+  if (req.body?.notes != null) enrollment.notes = String(req.body.notes).trim();
+  enrollment.reviewed_by = req.userId;
+  enrollment.reviewed_at = new Date();
+  await enrollment.save();
+  res.json({ message: 'Enrollment marked completed', enrollment });
 }
 
 module.exports = {
@@ -223,4 +297,7 @@ module.exports = {
   getMyEnrollments,
   getMyEnrollmentByCourse,
   listAllEnrollments,
+  manualEnroll,
+  cancelEnrollment,
+  completeEnrollment,
 };

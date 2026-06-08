@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const certificateTemplateSchema = new mongoose.Schema(
   {
     key: { type: String, required: true, unique: true, default: 'default' },
+    name: { type: String, default: 'Default Template', trim: true },
+    is_default: { type: Boolean, default: false, index: true },
     org_name: { type: String, default: 'Success Skills Institute' },
     certificate_title: { type: String, default: 'Certificate of Completion' },
     subtitle: { type: String, default: 'This certifies that' },

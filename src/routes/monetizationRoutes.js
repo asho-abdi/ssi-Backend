@@ -17,6 +17,12 @@ const {
   reviewWithdrawal,
   markOrderPaid,
 } = require('../controllers/monetizationController');
+const {
+  listPricingLinks,
+  createPricingLink,
+  updatePricingLink,
+  deletePricingLink,
+} = require('../controllers/pricingLinkController');
 const { protect, requireRoles } = require('../middleware/auth');
 
 const router = express.Router();
@@ -44,5 +50,10 @@ router.post('/withdrawals', requireRoles('teacher'), createWithdrawal);
 router.patch('/withdrawals/:id/review', requireRoles('admin'), reviewWithdrawal);
 
 router.patch('/orders/:id/mark-paid', requireRoles('admin'), markOrderPaid);
+
+router.get('/pricing-links', requireRoles('admin'), listPricingLinks);
+router.post('/pricing-links', requireRoles('admin'), createPricingLink);
+router.patch('/pricing-links/:id', requireRoles('admin'), updatePricingLink);
+router.delete('/pricing-links/:id', requireRoles('admin'), deletePricingLink);
 
 module.exports = router;
