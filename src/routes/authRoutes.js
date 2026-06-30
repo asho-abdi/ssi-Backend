@@ -15,26 +15,30 @@ const {
 } = require('../controllers/authController');
 const { protect, requireRoles } = require('../middleware/auth');
 const { passwordResetRateLimit } = require('../middleware/passwordResetRateLimit');
+const { loginRateLimit } = require('../middleware/loginRateLimit');
+const { registerLimiter } = require('../middleware/security');
 
 const router = express.Router();
 
 router.post(
   '/register',
+  registerLimiter,
   [
-    body('name').trim().notEmpty(),
-    body('username').trim().notEmpty(),
+    body('name').trim().notEmpty().isLength({ max: 120 }),
+    body('username').trim().notEmpty().isLength({ min: 3, max: 40 }),
     body('email').isEmail().normalizeEmail(),
-    body('password').isLength({ min: 6 }),
+    body('password').isLength({ min: 8, max: 128 }),
     body('phone').trim().notEmpty().withMessage('Phone number is required'),
-    body('referral_code').optional().trim(),
+    body('referral_code').optional().trim().isLength({ max: 32 }),
   ],
   register
 );
 router.post(
   '/login',
+  loginRateLimit,
   [
-    body('login').trim().notEmpty().withMessage('Email or username is required'),
-    body('password').notEmpty(),
+    body('login').trim().notEmpty().withMessage('Email or username is required').isLength({ max: 120 }),
+    body('password').notEmpty().isLength({ max: 128 }),
   ],
   login
 );
@@ -61,10 +65,16 @@ router.post(
 );
 router.post(
   '/reset-password-with-code',
-  [body('reset_session_token').trim().notEmpty(), body('password').isLength({ min: 6 })],
+  passwordResetRateLimit,
+  [body('reset_session_token').trim().notEmpty(), body('password').isLength({ min: 8, max: 128 })],
   resetPasswordWithCode
 );
-router.post('/reset-password', [body('token').trim().notEmpty(), body('password').isLength({ min: 6 })], resetPassword);
+router.post(
+  '/reset-password',
+  passwordResetRateLimit,
+  [body('token').trim().notEmpty(), body('password').isLength({ min: 8, max: 128 })],
+  resetPassword
+);
 router.get('/verify-email', verifyEmail);
 router.get('/me', protect, me);
 router.post('/send-verification', protect, sendEmailVerification);

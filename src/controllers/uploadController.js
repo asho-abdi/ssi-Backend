@@ -30,15 +30,7 @@ function uploadImage(req, res) {
   });
 }
 
-function inferFileType(mimetype = '', originalname = '') {
-  const ext = String(originalname).toLowerCase();
-  const type = String(mimetype).toLowerCase();
-  if (type.includes('pdf') || ext.endsWith('.pdf')) return 'pdf';
-  if (type.includes('powerpoint') || ext.endsWith('.ppt') || ext.endsWith('.pptx')) return 'ppt';
-  if (type.includes('excel') || type.includes('spreadsheet') || ext.endsWith('.xls') || ext.endsWith('.xlsx')) return 'excel';
-  if (type.includes('zip') || ext.endsWith('.zip')) return 'zip';
-  return 'other';
-}
+const { inferFileType } = require('../utils/resourceFileTypes');
 
 function uploadFile(req, res) {
   if (!req.file) {

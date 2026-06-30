@@ -3,17 +3,23 @@ const User = require('../models/User');
 const { normalizePermissions, hasPermission } = require('../utils/permissions');
 const { getSecret } = require('../utils/jwt');
 
-function protect(req, res, next) {
+async function protect(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Not authorized, no token' });
   }
   try {
     const token = header.split(' ')[1];
-    const secret = getSecret();
-    const decoded = jwt.verify(token, secret);
-    req.userId = decoded.id;
-    req.userRole = decoded.role;
+    const decoded = jwt.verify(token, getSecret());
+    const user = await User.findById(decoded.id).select('role account_status').lean();
+    if (!user) {
+      return res.status(401).json({ message: 'User not found' });
+    }
+    if (user.account_status === 'suspended') {
+      return res.status(403).json({ message: 'Account suspended' });
+    }
+    req.userId = String(decoded.id);
+    req.userRole = user.role;
     next();
   } catch (err) {
     if (err?.name === 'TokenExpiredError') {
@@ -28,7 +34,11 @@ async function attachUser(req, res, next) {
   try {
     const user = await User.findById(req.userId);
     if (!user) return res.status(401).json({ message: 'User not found' });
+    if (user.account_status === 'suspended') {
+      return res.status(403).json({ message: 'Account suspended' });
+    }
     req.user = user;
+    req.userRole = user.role;
     next();
   } catch (e) {
     return res.status(500).json({ message: 'Server error' });
@@ -48,9 +58,12 @@ function requireRoles(...roles) {
 function requirePermissions(...permissions) {
   return async (req, res, next) => {
     try {
-      const user = await User.findById(req.userId).select('role permissions').lean();
+      const user = await User.findById(req.userId).select('role permissions account_status').lean();
       if (!user) {
         return res.status(401).json({ message: 'User not found' });
+      }
+      if (user.account_status === 'suspended') {
+        return res.status(403).json({ message: 'Account suspended' });
       }
       req.userRole = user.role;
       req.userPermissions = normalizePermissions(user.permissions, user.role);

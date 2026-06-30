@@ -1,10 +1,12 @@
+const { validationResult } = require('express-validator');
 const Contact = require('../models/Contact');
 
 async function createContact(req, res) {
-  const { fullName, email, phone, subject, message } = req.body;
-  if (!fullName || !email || !subject || !message) {
-    return res.status(400).json({ message: 'fullName, email, subject, and message are required' });
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
   }
+  const { fullName, email, phone, subject, message } = req.body;
   const doc = await Contact.create({
     fullName: String(fullName).trim(),
     email:    String(email).trim().toLowerCase(),

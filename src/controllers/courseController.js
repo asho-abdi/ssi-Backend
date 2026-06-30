@@ -4,7 +4,29 @@ const Category = require('../models/Category');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+const jwt = require('jsonwebtoken');
+const { getSecret } = require('../utils/jwt');
+const { normalizePermissions, hasPermission } = require('../utils/permissions');
 const { Enrollment } = require('../models/Enrollment');
+
+async function canViewUnpublishedCourse(req) {
+  if (req.userRole && ['admin', 'teacher', 'editor'].includes(req.userRole)) {
+    return true;
+  }
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return false;
+  try {
+    const decoded = jwt.verify(header.split(' ')[1], getSecret());
+    const user = await User.findById(decoded.id).select('role account_status').lean();
+    return (
+      user &&
+      user.account_status !== 'suspended' &&
+      ['admin', 'teacher', 'editor'].includes(user.role)
+    );
+  } catch {
+    return false;
+  }
+}
 
 function normalizeSalePrice(price, salePriceInput) {
   if (salePriceInput == null || salePriceInput === '') return 0;
@@ -141,6 +163,7 @@ function normalizeFileType(rawType) {
   const type = String(rawType || '').trim().toLowerCase();
   if (type === 'pdf') return 'pdf';
   if (type === 'ppt') return 'ppt';
+  if (type === 'word') return 'word';
   if (type === 'excel') return 'excel';
   if (type === 'zip') return 'zip';
   return 'other';
@@ -406,7 +429,9 @@ async function downloadCourseResource(req, res) {
 }
 
 async function listCourses(req, res) {
-  const courses = await Course.find()
+  const staffView = await canViewUnpublishedCourse(req);
+  const filter = staffView ? {} : { is_published: true };
+  const courses = await Course.find(filter)
     .populate('teacher_id', 'name email')
     .populate('category_id', 'name slug')
     .sort({ createdAt: -1 })
@@ -423,6 +448,9 @@ async function getCourse(req, res) {
     .populate('category_id', 'name slug')
     .lean();
   if (!course) return res.status(404).json({ message: 'Course not found' });
+  if (course.is_published === false && !(await canViewUnpublishedCourse(req))) {
+    return res.status(404).json({ message: 'Course not found' });
+  }
   res.json(course);
 }
 
@@ -455,6 +483,14 @@ async function createCourse(req, res) {
     categoryId = category._id;
   }
   const video_url = req.body.video_url || (lessons[0] && lessons[0].video_url) || '';
+  let is_published = false;
+  if (req.body.is_published === true) {
+    const perms = req.userPermissions || normalizePermissions(null, req.userRole);
+    if (req.userRole !== 'admin' && !hasPermission(perms, 'publishCourse')) {
+      return res.status(403).json({ message: 'You do not have permission to publish courses' });
+    }
+    is_published = true;
+  }
   const course = await Course.create({
     title: req.body.title,
     description: req.body.description ?? '',
@@ -477,6 +513,7 @@ async function createCourse(req, res) {
     all_resources,
     topic_resources,
     material_includes,
+    is_published,
   });
   course.course_topics = (course.course_topics || []).map((topic) => ({
     ...topic.toObject(),
@@ -522,6 +559,7 @@ async function updateCourse(req, res) {
     material_includes,
     category_id,
     teacher_id,
+    is_published: publishFlag,
   } = req.body;
   if (title != null) course.title = title;
   if (description != null) course.description = description;
@@ -577,6 +615,18 @@ async function updateCourse(req, res) {
   }
   if (material_includes != null) {
     course.material_includes = normalizeMaterialIncludes(material_includes);
+  }
+  if (publishFlag === true) {
+    const perms = req.userPermissions || normalizePermissions(null, req.userRole);
+    if (req.userRole !== 'admin' && !hasPermission(perms, 'publishCourse')) {
+      return res.status(403).json({ message: 'You do not have permission to publish courses' });
+    }
+    course.is_published = true;
+  } else if (publishFlag === false) {
+    const perms = req.userPermissions || normalizePermissions(null, req.userRole);
+    if (req.userRole === 'admin' || hasPermission(perms, 'publishCourse')) {
+      course.is_published = false;
+    }
   }
   await course.save();
   course.course_topics = (course.course_topics || []).map((topic) => ({

@@ -162,7 +162,7 @@ async function getAnalytics(req, res) {
         as: 'event',
       },
     },
-    { $unwind: { path: '$event', preserveNullAndEmpty: true } },
+    { $unwind: { path: '$event', preserveNullAndEmptyArrays: true } },
     {
       $project: {
         _id: 1,

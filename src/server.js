@@ -1,9 +1,16 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const express = require('express');
-const cors = require('cors');
 const mongoose = require('mongoose');
 const { startMongoConnection } = require('./config/db');
+const {
+  applySecurityMiddleware,
+  sanitizeInput,
+  globalApiLimiter,
+  authLimiter,
+  contactLimiter,
+  registerLimiter,
+} = require('./middleware/security');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -131,13 +138,12 @@ app.get('/api/health', (_req, res) => {
 // ---------------------------------------------------------------------------
 // Middleware & API
 // ---------------------------------------------------------------------------
-app.use(
-  cors({
-    origin: true,
-  })
-);
+applySecurityMiddleware(app);
 
 app.use(express.json({ limit: '10mb' }));
+app.use(sanitizeInput);
+app.use('/api', globalApiLimiter);
+
 app.use('/uploads/images', express.static(path.join(__dirname, '..', 'uploads', 'images')));
 
 /** Avoid opaque 500s when the API is hit before Atlas connects (server listens immediately). */
@@ -149,7 +155,7 @@ app.use('/api', (req, res, next) => {
   });
 });
 
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/orders', orderRoutes);
@@ -169,7 +175,7 @@ app.use('/api/discussions', discussionRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/offline-enrollments', offlineEnrollmentRoutes);
-app.use('/api/contact', contactRoutes);
+app.use('/api/contact', contactLimiter, contactRoutes);
 app.use('/api/refunds', refundRoutes);
 app.use('/api/affiliate', affiliateRoutes);
 app.use('/api/admin/affiliate', adminAffiliateRoutes);
@@ -185,7 +191,11 @@ app.use((_req, res) => {
 });
 
 app.use((err, _req, res, _next) => {
-  console.error('[api] Error:', err.message || err);
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('[api] Error:', err.message || err);
+  } else {
+    console.error('[api] Error:', err.message || 'Unknown error');
+  }
   const status = err.status || err.statusCode || 500;
   const message =
     process.env.NODE_ENV === 'production' && status >= 500 ? 'Server error' : err.message || 'Server error';

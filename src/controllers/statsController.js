@@ -2,16 +2,22 @@ const User = require('../models/User');
 const Course = require('../models/Course');
 const Order = require('../models/Order');
 const Progress = require('../models/Progress');
+const Review = require('../models/Review');
+const Certificate = require('../models/Certificate');
+const { Enrollment } = require('../models/Enrollment');
 const { calculateEarnings, getInstructorPercentage } = require('../utils/commission');
 const { earningsEligiblePaidOrderQuery } = require('../utils/earningsEligibility');
 
 async function adminOverview(req, res) {
   const instructorPercentage = await getInstructorPercentage();
-  const [users, courses, orders, paidOrders] = await Promise.all([
+  const [users, courses, orders, paidOrders, reviews, certificates, pending_enrollments] = await Promise.all([
     User.countDocuments(),
     Course.countDocuments(),
     Order.countDocuments(),
     Order.countDocuments(earningsEligiblePaidOrderQuery()),
+    Review.countDocuments(),
+    Certificate.countDocuments(),
+    Enrollment.countDocuments({ status: { $in: ['pending', 'pending_verification'] } }),
   ]);
   const paidRows = await Order.find(earningsEligiblePaidOrderQuery())
     .select('amount instructor_earning admin_earning')
@@ -40,6 +46,9 @@ async function adminOverview(req, res) {
     revenue,
     platform_earnings,
     instructor_payouts,
+    reviews,
+    certificates,
+    pending_enrollments,
   });
 }
 

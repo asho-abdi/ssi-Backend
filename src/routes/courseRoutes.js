@@ -15,7 +15,7 @@ router.get('/', listCourses);
 router.get('/:courseId/resources/:resourceId/download', protect, downloadCourseResource);
 router.get('/:id', getCourse);
 
-router.post('/', protect, requirePermissions('createCourse', 'publishCourse'), createCourse);
+router.post('/', protect, requirePermissions('createCourse'), createCourse);
 router.put('/:id', protect, requirePermissions('editCourse', 'manageLessons'), updateCourse);
 router.delete('/:id', protect, requirePermissions('deleteCourse'), deleteCourse);
 

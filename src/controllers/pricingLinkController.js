@@ -3,7 +3,8 @@ const Course = require('../models/Course');
 const { generatePricingToken } = require('../models/CustomPricingLink');
 
 async function validatePricingLink(link, courseId) {
-  if (!link || !link.active) return { ok: false, error: 'Pricing link is inactive' };
+  if (!link) return { ok: false, error: 'Pricing link not found' };
+  if (!link.active) return { ok: false, error: 'Pricing link is inactive' };
   if (link.expires_at && new Date(link.expires_at) < new Date()) {
     return { ok: false, error: 'Pricing link has expired' };
   }
@@ -89,7 +90,10 @@ async function publicResolve(req, res) {
   const { token } = req.params;
   const courseId = req.query.course_id;
   const result = await resolveByToken(token, courseId);
-  if (!result.ok) return res.status(400).json({ message: result.error });
+  if (!result.ok) {
+    const status = result.error === 'Pricing link not found' ? 404 : 400;
+    return res.status(status).json({ message: result.error });
+  }
   const course = await Course.findById(result.link.course_id).select('title price sale_price thumbnail pricing_type').lean();
   res.json({
     link: {

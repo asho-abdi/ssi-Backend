@@ -15,6 +15,8 @@ const {
 } = require('../utils/otpCrypto');
 const { sendPasswordResetOtp: sendEmailOtp } = require('../services/emailService');
 const { sendPasswordResetOtp: sendWhatsAppOtp, isConfigured: whatsappConfigured } = require('../services/whatsappOtpService');
+const { validatePasswordStrength } = require('../utils/passwordPolicy');
+const { recordFailedLogin, clearLoginAttempts } = require('../middleware/loginRateLimit');
 
 const OTP_TTL_MS = Number(process.env.OTP_TTL_MS || 10 * 60 * 1000);
 const RESET_SESSION_TTL_MS = Number(process.env.RESET_SESSION_TTL_MS || 15 * 60 * 1000);
@@ -92,6 +94,10 @@ async function register(req, res) {
     return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
   }
   const { name, username, email, password, role, phone, referral_code: referralCodeInput } = req.body;
+  const passwordError = validatePasswordStrength(password);
+  if (passwordError) {
+    return res.status(400).json({ message: passwordError });
+  }
   const allowedRegisterRoles = ['student'];
   const finalRole = allowedRegisterRoles.includes(role) ? role : 'student';
   const exists = await User.findOne({ email });
@@ -162,6 +168,7 @@ async function login(req, res) {
     parsed.kind === 'email' ? { email: parsed.value } : { username: parsed.value };
   const user = await User.findOne(query).select('+password');
   if (!user || !(await user.comparePassword(password))) {
+    recordFailedLogin(req);
     await logAuditEvent(req, {
       actor_role: 'anonymous',
       action: 'auth.login',
@@ -171,6 +178,10 @@ async function login(req, res) {
     });
     return res.status(401).json({ message: 'Invalid email, username, or password' });
   }
+  if (user.account_status === 'suspended') {
+    return res.status(403).json({ message: 'Account suspended' });
+  }
+  clearLoginAttempts(req);
   const token = signToken(user);
   await logAuditEvent(req, {
     actor_id: user._id,
@@ -188,7 +199,7 @@ async function login(req, res) {
 async function me(req, res) {
   const user = await User.findById(req.userId);
   if (!user) return res.status(404).json({ message: 'User not found' });
-  const payload = user.toObject();
+  const payload = user.toJSON();
   payload.permissions = normalizePermissions(payload.permissions, payload.role);
   res.json(payload);
 }
@@ -385,7 +396,8 @@ async function resetPasswordWithCode(req, res) {
   const nextPassword = String(req.body?.password || '');
 
   if (!resetSessionToken) return res.status(400).json({ message: 'Reset session token is required' });
-  if (nextPassword.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters' });
+  const passwordError = validatePasswordStrength(nextPassword);
+  if (passwordError) return res.status(400).json({ message: passwordError });
 
   const row = await PasswordResetOtp.findOne({
     reset_session_hash: hashResetSession(resetSessionToken),
@@ -448,7 +460,8 @@ async function resetPassword(req, res) {
   const rawToken = String(req.body?.token || '').trim();
   const nextPassword = String(req.body?.password || '');
   if (!rawToken) return res.status(400).json({ message: 'Reset token is required' });
-  if (nextPassword.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters' });
+  const passwordError = validatePasswordStrength(nextPassword);
+  if (passwordError) return res.status(400).json({ message: passwordError });
   const user = await User.findOne({
     password_reset_token_hash: hashToken(rawToken),
     password_reset_expires_at: { $gt: new Date() },

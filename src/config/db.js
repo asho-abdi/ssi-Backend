@@ -26,6 +26,14 @@ async function connectDB() {
   });
   console.log('[db] MongoDB connected successfully');
   console.log('[db] NODE_ENV:', process.env.NODE_ENV || 'development');
+  const { backfillCourseDurations } = require('../utils/backfillCourseDurations');
+  backfillCourseDurations().catch((err) => {
+    console.warn('[courses] Duration backfill error:', err.message || err);
+  });
+  const { backfillCoursePublished } = require('../utils/backfillCoursePublished');
+  backfillCoursePublished().catch((err) => {
+    console.warn('[courses] Published backfill error:', err.message || err);
+  });
 }
 
 /**

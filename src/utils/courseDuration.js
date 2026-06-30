@@ -90,15 +90,15 @@ function calcCourseMinutes(courseDoc) {
 
 /**
  * Format total minutes as a human-readable label.
- * Examples: "8h 45min", "1h", "45 min", "5 min"
+ * Examples: "8h 45m", "1h", "45m"
  */
 function formatDurationLabel(totalMinutes) {
   if (!totalMinutes || !Number.isFinite(totalMinutes) || totalMinutes <= 0) return null;
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}min`;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
   if (h > 0) return `${h}h`;
-  return `${m} min`;
+  return `${m}m`;
 }
 
 /**

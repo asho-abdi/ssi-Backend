@@ -1,6 +1,12 @@
-const { getVideoDurationSeconds } = require('../utils/videoDuration');
+const { getVideoDurationSeconds, parseYoutubeVideoId, vimeoWatchUrlFromAny } = require('../utils/videoDuration');
 
 const MAX_URLS = 40;
+
+function isAllowedMediaUrl(url) {
+  const trimmed = String(url || '').trim();
+  if (!trimmed || trimmed.length > 2048) return false;
+  return Boolean(parseYoutubeVideoId(trimmed) || vimeoWatchUrlFromAny(trimmed));
+}
 
 /**
  * POST /api/media/video-durations
@@ -13,7 +19,7 @@ async function postVideoDurations(req, res) {
     if (!Array.isArray(urls)) {
       return res.status(400).json({ message: 'Body must include urls: string[]' });
     }
-    const cleaned = [...new Set(urls.map((u) => String(u || '').trim()).filter(Boolean))].slice(0, MAX_URLS);
+    const cleaned = [...new Set(urls.map((u) => String(u || '').trim()).filter(isAllowedMediaUrl))].slice(0, MAX_URLS);
     if (cleaned.length === 0) {
       return res.json({ durations: {} });
     }

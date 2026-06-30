@@ -1,11 +1,19 @@
 const crypto = require('crypto');
 
 function getOtpPepper() {
-  return String(process.env.OTP_PEPPER || process.env.JWT_SECRET || 'dev-only-otp-pepper-change-me');
+  const pepper = process.env.OTP_PEPPER || process.env.JWT_SECRET;
+  if (!pepper) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('OTP_PEPPER or JWT_SECRET must be configured');
+    }
+    return 'dev-only-otp-pepper-change-me';
+  }
+  return String(pepper);
 }
 
 function generateNumericOtp(length = 6) {
-  const n = Math.floor(Math.random() * 10 ** length);
+  const max = 10 ** length;
+  const n = crypto.randomInt(0, max);
   return String(n).padStart(length, '0');
 }
 

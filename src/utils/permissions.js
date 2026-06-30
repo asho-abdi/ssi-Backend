@@ -34,7 +34,7 @@ const ROLE_PERMISSION_DEFAULTS = {
     createCourse: true,
     editCourse: true,
     deleteCourse: false,
-    publishCourse: true,
+    publishCourse: false,
     viewStudents: false,
     viewEarnings: false,
     manageLessons: true,

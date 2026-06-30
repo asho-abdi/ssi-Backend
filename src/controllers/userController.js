@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { validatePasswordStrength } = require('../utils/passwordPolicy');
 const { ROLES } = require('../models/User');
 const Course = require('../models/Course');
 const Order = require('../models/Order');
@@ -99,8 +100,9 @@ async function createUserByAdmin(req, res) {
   }
 
   const initialPassword = String(password).trim();
-  if (initialPassword.length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters' });
+  const passwordError = validatePasswordStrength(initialPassword);
+  if (passwordError) {
+    return res.status(400).json({ message: passwordError });
   }
 
   let normalizedTeacherFee = 0;

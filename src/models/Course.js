@@ -26,7 +26,7 @@ const resourceSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     url: { type: String, required: true, trim: true },
-    file_type: { type: String, enum: ['pdf', 'ppt', 'excel', 'zip', 'other'], default: 'other' },
+    file_type: { type: String, enum: ['pdf', 'ppt', 'excel', 'word', 'zip', 'other'], default: 'other' },
     size_bytes: { type: Number, default: 0, min: 0 },
     storage_path: { type: String, default: '', trim: true },
   },
@@ -127,6 +127,8 @@ const courseSchema = new mongoose.Schema(
     material_includes: [{ type: String, trim: true }],
     /** Override global affiliate % for this course; null = platform default */
     affiliate_commission_percent: { type: Number, min: 0, max: 100, default: null },
+    /** When false, course is hidden from the public catalog until an admin (or user with publishCourse) publishes it. */
+    is_published: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );
